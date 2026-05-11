@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Structured log service",
-  "packageManager": "pnpm@10.33.4",
+  "packageManager": "pnpm@11.1.0",
   "engines": {
     "node": ">=24 <25"
   },
@@ -53,10 +53,5 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.2",
     "vitest": "^3.2.4"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
   }
 }

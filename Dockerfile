@@ -6,12 +6,12 @@ WORKDIR /app
 RUN corepack enable
 
 FROM base AS prod-deps
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
   pnpm install --frozen-lockfile --prod --ignore-scripts
 
 FROM base AS build
-COPY package.json pnpm-lock.yaml tsconfig.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json ./
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
   pnpm install --frozen-lockfile
 COPY src ./src

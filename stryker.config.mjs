@@ -1,6 +1,7 @@
 /** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
 const config = {
   checkers: ['typescript'],
+  plugins: ['@stryker-mutator/typescript-checker', '@stryker-mutator/vitest-runner'],
   coverageAnalysis: 'off',
   mutate: ['src/app.ts'],
   reporters: ['clear-text', 'html'],
