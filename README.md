@@ -1,98 +1,77 @@
 # structured-log-service
 
-Structured log service built with Node.js and TypeScript.
+`structured-log-service` is a small Node.js and TypeScript service built with Express. It provides a simple HTTP endpoint and serves as a clean starting point for services that emit structured logs.
 
-## Goals
+## Installation
 
-- Start from the provided Express + TypeScript starter project.
-- Use `mise` as the canonical local workflow entrypoint.
-- Standardize on `pnpm` for package management.
-- Enforce formatting, linting, typechecking, tests, Docker builds, and mutation testing through shared commands and CI.
-- Keep local workflows, CI, and container packaging aligned.
+This project uses Node.js 24 and `pnpm`.
 
-## Tooling
-
-- Node.js 24 LTS via `mise`
-- `pnpm`
-- TypeScript
-- Express
-- Vitest
-- ESLint
-- Prettier
-- Husky + lint-staged
-- StrykerJS
-
-## Getting Started
-
-1. Install `mise`: <https://mise.jdx.dev/getting-started.html>
-2. Activate `mise` in your shell. For `zsh`:
+If you use `mise`, install the project tools and dependencies with:
 
 ```sh
-echo 'eval "$(mise activate zsh)"' >> ~/.zshrc
-exec zsh
+mise trust
+mise install
+mise run install
 ```
 
-3. Trust the project config: `mise trust`
-4. Install tools and dependencies: `mise run install`
-5. Start the app: `mise run dev`
-
-If you skip shell activation, the project still works through explicit `mise run ...` commands, but `node` and `pnpm` will not automatically resolve from the project `mise` toolchain in your shell.
-
-If `mise` is unavailable locally, you can bootstrap with Corepack:
+If you already have Node.js 24 and `pnpm` available locally, you can install dependencies with:
 
 ```sh
-corepack enable
-corepack pnpm install
+pnpm install
 ```
 
-## Common Commands
+## Usage
 
-- `mise run check`: lint, formatting check, and typecheck
-- `mise run test`: run unit, integration, and e2e tests
-- `mise run test:mutate`: run Stryker mutation testing
-- `mise run build`: compile TypeScript to `dist/`
-- `mise run docker:build`: build the Docker image locally
+Start the development server:
 
-Mutation testing is currently scoped to the HTTP entry surface and can expand with additional application logic.
+```sh
+mise run dev
+```
 
-The production container uses a multi-stage Docker build with a separate runtime image, production-only dependencies, a non-root runtime user, and `dumb-init` for safer PID 1 behavior.
+By default, the service listens on port `3003`.
 
-## Test Layout
+You can verify it is running with:
 
-- `test/unit`: fast isolated tests
-- `test/integration`: subsystem boundary tests
-- `test/e2e`: thin HTTP smoke flows
-- `test/helpers`: shared test utilities
+```sh
+curl http://localhost:3003/
+```
 
-This follows the testing pyramid documented in `AGENTS.md`.
+Expected response:
 
-## Git Hooks
+```json
+{
+  "name": "structured-log-service",
+  "status": "ok"
+}
+```
 
-Hooks are installed through `husky` during dependency installation.
+To build and run the production output:
 
-- `pre-commit`: runs Prettier and ESLint fixes on staged files via `lint-staged`
-- `pre-push`: runs `mise run check` and unit tests
+```sh
+mise run build
+pnpm start
+```
 
-Mutation testing remains a CI-authoritative gate instead of a local hook.
+## Configuration
+
+The service currently supports the following environment variable:
+
+- `PORT`: HTTP port for the server. Defaults to `3003`.
+
+Example:
+
+```sh
+PORT=4000 pnpm start
+```
 
 ## Docker
 
-Build locally with:
+Build the local Docker image with:
 
 ```sh
 mise run docker:build
 ```
 
-CI always builds the Docker artifact. Pushes to `main` and version tags also publish the image to `ghcr.io`.
+## License
 
-## Project Scope
-
-This repository includes:
-
-- the HTTP service baseline
-- project tooling and quality gates
-- test structure and baseline coverage
-- CI and Docker packaging setup
-- project documentation and specification
-
-See `spec.md` for the project specification.
+Licensed under the Apache License 2.0. See `LICENSE` for details.
