@@ -53,5 +53,11 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.2",
     "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "path-to-regexp@<0.1.13": ">=0.1.13",
+      "postcss@<8.5.10": ">=8.5.10"
+    }
   }
 }
