@@ -1,0 +1,6 @@
+dist
+coverage
+.stryker-tmp
+reports
+node_modules
+pnpm-lock.yaml

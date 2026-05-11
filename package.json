@@ -1,0 +1,62 @@
+{
+  "name": "structured-log-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Structured log service",
+  "packageManager": "pnpm@10.33.4",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck",
+    "dev": "tsx watch src/index.ts",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check .",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "prepare": "husky",
+    "start": "node dist/index.js",
+    "start:ts": "tsx src/index.ts",
+    "test": "pnpm test:unit && pnpm test:integration && pnpm test:e2e",
+    "test:e2e": "vitest run --dir test/e2e",
+    "test:integration": "vitest run --dir test/integration",
+    "test:mutate": "stryker run",
+    "test:unit": "vitest run --dir test/unit",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit --project tsconfig.json"
+  },
+  "lint-staged": {
+    "*.{js,cjs,mjs,ts,mts,cts,json,md,yml,yaml}": "prettier --write",
+    "*.{js,cjs,mjs,ts,mts,cts}": "eslint --fix"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@stryker-mutator/core": "^9.3.0",
+    "@stryker-mutator/typescript-checker": "^9.3.0",
+    "@stryker-mutator/vitest-runner": "^9.3.0",
+    "@types/express": "^5.0.4",
+    "@types/node": "^24.10.1",
+    "@types/supertest": "^6.0.3",
+    "eslint": "^9.39.1",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^16.4.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.6",
+    "prettier": "^3.6.2",
+    "supertest": "^7.1.4",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.2",
+    "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

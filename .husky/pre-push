@@ -1,0 +1,7 @@
+if command -v mise >/dev/null 2>&1; then
+  mise run check
+  mise run test:unit
+else
+  npx pnpm@10 check
+  npx pnpm@10 test:unit
+fi

@@ -1,0 +1,17 @@
+.claude
+.git
+.github
+.husky
+.mise.local.toml
+.stryker-tmp
+coverage
+dist
+node_modules
+reports
+test
+.env
+.env.*
+AGENTS.md
+CLAUDE.md
+README.md
+spec.md

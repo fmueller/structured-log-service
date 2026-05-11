@@ -1,0 +1,59 @@
+[tools]
+node = "24"
+pnpm = "10"
+
+[tasks.install]
+description = "Install project dependencies"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.lint]
+description = "Run ESLint"
+run = "pnpm lint"
+
+[tasks.format]
+description = "Format repository files"
+run = "pnpm format"
+
+[tasks."format:check"]
+description = "Check formatting"
+run = "pnpm format:check"
+
+[tasks.typecheck]
+description = "Run TypeScript typecheck"
+run = "pnpm typecheck"
+
+[tasks."test:unit"]
+description = "Run unit tests"
+run = "pnpm test:unit"
+
+[tasks."test:integration"]
+description = "Run integration tests"
+run = "pnpm test:integration"
+
+[tasks."test:e2e"]
+description = "Run end-to-end tests"
+run = "pnpm test:e2e"
+
+[tasks.test]
+description = "Run full test suite"
+run = "pnpm test"
+
+[tasks.build]
+description = "Build TypeScript output"
+run = "pnpm build"
+
+[tasks.check]
+description = "Run lint, format check, and typecheck"
+run = "pnpm check"
+
+[tasks."test:mutate"]
+description = "Run mutation testing"
+run = "pnpm test:mutate"
+
+[tasks."docker:build"]
+description = "Build Docker image locally"
+run = "docker build -t structured-log-service:local ."
+
+[tasks.dev]
+description = "Run dev server"
+run = "pnpm dev"
