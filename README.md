@@ -1,5 +1,10 @@
 # structured-log-service
 
+[![CI](https://github.com/fmueller/structured-log-service/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fmueller/structured-log-service/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen.svg)](https://nodejs.org)
+[![pnpm](https://img.shields.io/badge/pnpm-10-orange.svg)](https://pnpm.io)
+
 `structured-log-service` is a small Node.js and TypeScript service built with Express. It provides a simple HTTP endpoint and serves as a clean starting point for services that emit structured logs.
 
 ## Installation
