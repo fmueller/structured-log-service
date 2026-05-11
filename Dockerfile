@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS base
+FROM node:26-bookworm-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 ENV HUSKY=0
@@ -17,7 +17,7 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 COPY src ./src
 RUN pnpm build
 
-FROM node:24-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 LABEL org.opencontainers.image.source="https://github.com/fmueller/structured-log-service"
