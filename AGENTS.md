@@ -84,7 +84,11 @@ Use these defaults unless a task requires otherwise.
 
 ## Testing conventions
 
-- Follow TDD for non-trivial code changes whenever practical.
+- For any behavior change, bug fix, or non-trivial logic change, follow TDD: start by writing or updating a test that fails for the intended change.
+- Follow the red, green, refactor cycle explicitly: make the smallest production change needed to get the test green, then perform a refactoring pass after the tests pass.
+- Do not stop at green. After tests pass, refactor for clarity, duplication removal, and simplicity without changing behavior.
+- After refactoring, rerun the relevant tests to confirm behavior still passes.
+- Trivial or purely mechanical edits that do not change behavior, such as renames, comments, or formatting-only changes, may skip TDD.
 - Follow the testing pyramid: default to unit tests, add integration tests for subsystem boundaries, and keep e2e tests sparse and high-signal.
 - `test/unit` is for fast isolated tests.
 - `test/integration` is for subsystem boundary tests.
@@ -102,6 +106,9 @@ Use these defaults unless a task requires otherwise.
 
 ## Change checklist for agents
 
+- For behavior changes, bug fixes, and non-trivial logic changes, start with a failing test before changing production code.
+- Make the smallest change needed to get the relevant tests green, then complete a refactoring pass before handoff.
+- Rerun the relevant tests after refactoring.
 - Run `mise run check` on every code change.
 - Run targeted tests for touched areas.
 - Run `mise run test` before handing off broad changes.
