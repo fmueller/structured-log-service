@@ -1,3 +1,7 @@
 allowBuilds:
   esbuild: true
   protobufjs: true
+overrides:
+  'path-to-regexp@<0.1.13': '>=0.1.13'
+  'postcss@<8.5.10': '>=8.5.10'
+  'protobufjs@8.0.1': '^8.0.2'
