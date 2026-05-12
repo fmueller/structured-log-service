@@ -9,6 +9,7 @@ import { InMemoryApiKeyStore } from './auth/apiKeyStore';
 import { createAuthMiddleware } from './auth/authMiddleware';
 import { config, type Config } from './config';
 import { createHealthRoutes } from './http/healthRoutes';
+import { serviceInfo } from './serviceInfo';
 import { LogQueue } from './logs/logQueue';
 import { StdoutLogProcessor } from './logs/logProcessor';
 import { createLogRoutes } from './logs/logRoutes';
@@ -65,7 +66,7 @@ export function createApp(overrideConfig?: Config): CreatedApp {
   );
 
   app.get('/', (_req: Request, res: Response) => {
-    res.json({ name: 'structured-log-service', status: 'ok' });
+    res.json({ name: serviceInfo.name, version: serviceInfo.version });
   });
   app.use(createHealthRoutes(queue, worker, cfg.queue.readinessHighWaterMarkRatio));
 

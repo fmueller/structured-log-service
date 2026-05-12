@@ -33,6 +33,9 @@ describe('root route e2e', () => {
     const response = await fetch(`http://127.0.0.1:${address.port}/`);
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ name: 'structured-log-service', status: 'ok' });
+    expect(await response.json()).toEqual({
+      name: 'structured-log-service',
+      version: expect.stringMatching(/^\d+\.\d+\.\d+/),
+    });
   });
 });
