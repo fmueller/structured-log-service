@@ -4,125 +4,155 @@ Guidance for coding agents working in the `structured-log-service` repository.
 
 ## Scope and intent
 
-- This is a Node.js / TypeScript service repository.
-- Use `mise` as the source of truth for local workflows and CI command parity.
+- Node.js / TypeScript service repository.
+- `mise` is the source of truth for local workflows and CI command parity.
 - Keep changes small, direct, and easy to review.
+
+## Boundaries
+
+### Always
+
+- Run `mise run check` before handoff.
+- Start behavior changes with a failing test.
+- Validate external input (env vars, HTTP bodies, file contents) with `zod` at the boundary.
+- Keep changes focused on one logical concern.
+
+### Ask first
+
+- Adding a new runtime dependency.
+- Changing CI workflow, `mise.toml` tasks, or Husky hooks.
+- Touching cross-cutting setup (`src/observability/`, `src/telemetry/`, top-level wiring).
+
+### Never
+
+- Commit secrets, credentials, or `.env` contents.
+- Reference files inside `specs/` from `src/` or `test/` (including comments) — `specs/` is `.gitignore`d, so the reference dangles for anyone without the local working copy. Restate the constraint inline instead.
+- Skip Husky hooks (`--no-verify`) or bypass `mise run check`.
+- Mix unrelated refactors or tooling churn into a focused change.
 
 ## Source-of-truth files
 
-- Project specification and repository conventions: `spec.md`.
 - Local workflows and CI-equivalent commands: `mise.toml`.
 - CI checks and Docker publishing: `.github/workflows/ci.yml`.
 - Contributor and setup overview: `README.md`.
 - Container packaging: `Dockerfile`.
+- Lint/format/typecheck rules: `eslint.config.mjs`, `.prettierrc.json`, `tsconfig.json`.
 
 ## Toolchain and environment
 
-- Node.js version is managed in `mise.toml`.
-- Current baseline: Node.js 24 LTS.
-- Package manager: `pnpm`.
-- Prefer commands that mirror CI.
-- For interactive local work, prefer an activated `mise` shell so `node` and `pnpm` resolve from the project toolchain automatically.
-- If `mise` is not available locally, use Corepack only as a bootstrap fallback.
+- Node.js 24 LTS, pnpm — both pinned in `mise.toml`.
+- Prefer an activated `mise` shell so `node` and `pnpm` resolve from the project toolchain.
+- If `mise` is unavailable, use Corepack only as a bootstrap fallback.
 
 ## Build, lint, and test commands
 
-Use these defaults unless a task requires otherwise.
+Mirror these in CI; do not invent equivalents.
 
 ### Install
 
-- Install tools and dependencies: `mise run install`
+- `mise run install` — install tools and dependencies.
 
 ### Quality checks
 
-- Run the full default check: `mise run check`
-- Run lint only: `mise run lint`
-- Run formatting fix: `mise run format`
-- Run formatting check: `mise run format:check`
-- Run typecheck: `mise run typecheck`
+- `mise run check` — full default check (lint + format check + typecheck).
+- `mise run lint` — lint only.
+- `mise run format` — apply formatting.
+- `mise run format:check` — formatting check, no writes.
+- `mise run typecheck` — typecheck only.
 
-### Build
+### Build and run
 
-- Build the project: `mise run build`
+- `mise run build` — compile to `dist/`.
+- `mise run dev` — local dev server on port `3003`.
 
 ### Tests
 
-- Run the full test suite: `mise run test`
-- Run unit tests: `mise run test:unit`
-- Run integration tests: `mise run test:integration`
-- Run e2e tests: `mise run test:e2e`
-
-### Mutation tests
-
-- Run mutation testing: `mise run test:mutate`
-- Mutation score must stay at or above the CI threshold of `70%`.
+- `mise run test` — full suite.
+- `mise run test:unit` — fast isolated tests in `test/unit`.
+- `mise run test:integration` — subsystem boundary tests in `test/integration`.
+- `mise run test:e2e` — live HTTP / process-level smoke flows in `test/e2e`.
+- `mise run test:mutate` — mutation testing; must stay at or above CI threshold `70%`.
 
 ### Docker
 
-- Build the local image: `mise run docker:build`
+- `mise run docker:build` — build local image.
 
-## Coding style guidelines
+## Coding style
 
-### Formatting and structure
+ESLint, Prettier, and `tsc --strict` enforce formatting, semicolons, quotes, line length, and unsafe-any rules. Do not re-litigate those here. The rules below cover what tooling cannot enforce.
 
-- Always run `mise run check` after every code change.
-- Keep functions focused and prefer direct code over unnecessary abstraction.
-- Follow the existing file and folder layout unless there is a clear reason to change it.
-- Do not reference files inside `specs/` from source code or tests (including comments). The `specs/` folder is `.gitignore`d, so any such reference is a dangling pointer for anyone without the local working copy. If a constraint or rationale matters at the code site, restate it inline.
+### Naming
 
-### Naming and types
+- Files: `kebab-case.ts` (matches `root-route.test.ts`, `logger.ts`). Test files end in `.test.ts`.
+- Identifiers: `camelCase` for functions and variables, `PascalCase` for types/interfaces/classes, `SCREAMING_SNAKE_CASE` only for env-var keys at the boundary.
+- Verbs for functions, nouns for data: `parseConfig(env)` returns `config`; `buildLogger(config)` returns `logger`.
+- Booleans read as predicates: `isReady`, `hasTracing`, `shouldRetry`. Never `flag`, `status`, or `done` alone.
+- Idiomatic abbreviations only: `req`, `res`, `id`, `url` are fine; `usrCfgMgr` is not.
 
-- Use descriptive names and keep exported APIs small.
+```ts
+// Good
+export function buildLoggerFromEnv(env: Env): Logger { ... }
+
+// Bad — name hides intent, type leaks `any`, return inferred from junk
+export function init(x: any) { ... }
+```
+
+### Comments
+
+- Default to **no comments**. Well-named identifiers carry the _what_.
+- Write a comment only when the _why_ is non-obvious: a hidden constraint, a workaround for a specific upstream bug, a surprising invariant.
+- Never restate code (`// increment i`). Never link to tickets, PRs, or `specs/` files — those rot or dangle.
+- JSDoc only on exported APIs where the type signature alone does not convey intent.
+
+### Functions and files
+
+- Target: functions ≤30 lines, files ≤300 lines. Hard ceiling: 800 lines.
+- Maximum nesting depth: 3. Prefer early returns over nested `if`.
+- One exported concept per file; co-locate private helpers below the export.
+- Pure functions where practical: same inputs → same outputs, no hidden I/O.
+
+### Types and validation
+
 - Prefer TypeScript inference for local variables and obvious return types.
-- Add explicit return types where they clarify exported APIs, module boundaries, or otherwise non-obvious behavior.
-- Use `zod` for runtime validation when validating configuration or external input.
+- Add explicit return types on exported functions and module boundaries.
+- Parse external input through `zod` schemas at the boundary; internal code trusts the validated type and does not re-check.
 
 ### Error handling
 
-- Throw or return actionable errors.
-- Avoid silent failure paths.
-- Keep startup and configuration failures explicit.
+- Throw on programmer errors and invariant violations. Return result-style values only when a caller can meaningfully recover.
+- Error messages name the failing input and expected shape: `Invalid PORT: expected number ≥ 1, got "abc"`.
+- Never swallow errors silently. If an error is intentionally ignored, write one comment explaining why — this is the rare case where a comment earns its keep.
+- Keep startup and configuration failures loud and explicit.
+
+### Refactoring
+
+- Refactor during the green step of TDD, not before tests pass.
+- Trigger a refactor when you see duplication across three call sites, a function pushing past 30 lines, or a name that needs a comment to explain.
+- A refactor must not change behavior. If a test changes, it's a behavior change — split the commit.
 
 ## Testing conventions
 
-- For any behavior change, bug fix, or non-trivial logic change, follow TDD: start by writing or updating a test that fails for the intended change.
-- Follow the red, green, refactor cycle explicitly: make the smallest production change needed to get the test green, then perform a refactoring pass after the tests pass.
-- Do not stop at green. After tests pass, refactor for clarity, duplication removal, and simplicity without changing behavior.
-- After refactoring, rerun the relevant tests to confirm behavior still passes.
-- Trivial or purely mechanical edits that do not change behavior, such as renames, comments, or formatting-only changes, may skip TDD.
-- Follow the testing pyramid: default to unit tests, add integration tests for subsystem boundaries, and keep e2e tests sparse and high-signal.
-- `test/unit` is for fast isolated tests.
-- `test/integration` is for subsystem boundary tests.
-- `test/e2e` is for live HTTP or process-level smoke flows.
-- `test/helpers` is for shared test utilities and fixtures.
-- Run mutation testing after code changes and keep the score above the CI threshold.
+- **TDD is mandatory** for behavior changes, bug fixes, and non-trivial logic: write or update a failing test first, then make it pass with the smallest change, then refactor.
+- Trivial edits may skip TDD: renames, formatting, comments, pure code moves, dependency version bumps.
+- Do not stop at green. After tests pass, refactor for clarity and duplication; rerun tests.
+- Follow the testing pyramid: most tests in `test/unit`, fewer in `test/integration`, sparse and high-signal in `test/e2e`.
+- Test naming: `describe('parseConfig', () => { it('rejects PORT below 1', ...) })` — the outer block names the unit, the inner names one observable behavior.
+- One behavior per test. Group assertions only if they describe the same behavior.
+- Test the public boundary of the module. If a private helper needs its own test, promote it to an exported function in its own file.
+- Shared fixtures and utilities live in `test/helpers/`. Do not deepen `test/unit` with shared setup.
+- Run `mise run test:mutate` after non-trivial `src/` logic changes; skip for type-only or test-only edits. Keep mutation score ≥70%.
 
-## Git hooks and commit guidance
+## Git hooks and commit messages
 
-- Husky hooks are part of the repository setup.
-- `pre-commit` runs staged-file formatting and lint autofixes through `lint-staged`.
-- `pre-push` runs `mise run check` and unit tests.
-- Use conventional commit messages.
-- Conventional commits are documented, not automatically enforced.
+- Husky `pre-commit` runs `lint-staged` (Prettier + ESLint autofix on staged files).
+- Husky `pre-push` runs `mise run check` and `mise run test:unit`.
+- Use conventional commit messages (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`, `perf:`, `ci:`). Not auto-enforced, but expected.
 
-## Change checklist for agents
+## Change checklist
 
-- For behavior changes, bug fixes, and non-trivial logic changes, start with a failing test before changing production code.
-- Make the smallest change needed to get the relevant tests green, then complete a refactoring pass before handoff.
-- Rerun the relevant tests after refactoring.
-- Run `mise run check` on every code change.
-- Run targeted tests for touched areas.
-- Run `mise run test` before handing off broad changes.
-- Run `mise run test:mutate` after non-trivial logic changes.
-- Keep mutation testing at or above the CI threshold of `70%`.
-- Update `README.md` when setup, workflows, or developer commands change.
-- Update `spec.md` only when explicitly changing the project specification.
-
-## Agent do/don'ts
-
-- Do keep changes focused on one logical concern.
-- Do keep CI, local commands, and docs aligned.
-- Do use conventional commit messages.
-- Don't mix unrelated refactors or tooling churn into focused changes.
-- Don't bypass CI-equivalent checks before asking for review.
-- Don't add heavyweight tooling unless it has a clear purpose in this repository.
+1. Write or update a failing test (skip only for trivial edits listed above).
+2. Implement the minimum needed to pass.
+3. Run `mise run check` and the targeted test file.
+4. Refactor for clarity; rerun tests.
+5. Run `mise run test` for broad changes; `mise run test:mutate` for non-trivial `src/` logic.
+6. Update `README.md` when setup, workflows, or developer commands change.
