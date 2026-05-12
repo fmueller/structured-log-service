@@ -1,35 +1,92 @@
 import { describe, expect, it } from 'vitest';
 
-import { createConfig, parsePort } from '../../src/config';
-
-describe('parsePort', () => {
-  it('uses the default port when the value is missing', () => {
-    expect(parsePort(undefined)).toBe(3003);
-  });
-
-  it('parses a configured port', () => {
-    expect(parsePort('4321')).toBe(4321);
-  });
-
-  it('rejects an invalid port', () => {
-    expect(() => parsePort('abc')).toThrow('PORT must be a positive integer');
-  });
-
-  it('rejects an empty port value', () => {
-    expect(() => parsePort('')).toThrow('PORT must be a positive integer');
-  });
-
-  it('rejects zero as a port value', () => {
-    expect(() => parsePort('0')).toThrow('PORT must be a positive integer');
-  });
-});
+import { createConfig } from '../../src/config';
 
 describe('createConfig', () => {
-  it('uses the default port when PORT is not set', () => {
-    expect(createConfig({})).toEqual({ port: 3003 });
+  it('parses defaults when env is empty object', () => {
+    const result = createConfig({});
+
+    expect(result.port).toBe(3003);
+    expect(result.http).toEqual({ jsonBodyLimit: '1mb' });
+    expect(result.auth.apiKeys.size).toBe(1);
+    expect(result.auth.apiKeys.get('dev-api-key')).toEqual({
+      id: 'client-1',
+      name: 'Client 1',
+    });
+    expect(result.rateLimit).toEqual({
+      algorithm: 'fixed',
+      maxRequests: 10,
+      windowMs: 1_000,
+    });
+    expect(result.logs).toEqual({ maxBatchSize: 1_000 });
+    expect(result.queue).toEqual({
+      maxSize: 1_000,
+      readinessHighWaterMarkRatio: 0.9,
+    });
+    expect(result.worker).toEqual({
+      concurrency: 5,
+      maxRetries: 3,
+      processingDelayMs: 100,
+      pollIntervalMs: 100,
+      retryBackoffBaseMs: 50,
+      drainTimeoutMs: 5_000,
+    });
+    expect(result.otel).toEqual({
+      serviceName: 'log-ingestion-service',
+      exporterEndpoint: undefined,
+    });
+    expect(result.logging).toEqual({ level: 'info' });
   });
 
-  it('passes the parsed env value through parsePort', () => {
-    expect(createConfig({ PORT: '4321' })).toEqual({ port: 4321 });
+  it('coerces numeric env vars', () => {
+    const result = createConfig({ RATE_LIMIT_MAX_REQUESTS: '42' });
+
+    expect(result.rateLimit.maxRequests).toBe(42);
+  });
+
+  it('rejects non-positive PORT', () => {
+    expect(() => createConfig({ PORT: '0' })).toThrow();
+  });
+
+  it('rejects unknown rate-limit algorithm', () => {
+    expect(() => createConfig({ RATE_LIMIT_ALGORITHM: 'leakybucket' })).toThrow();
+  });
+
+  it('parses multiple API keys', () => {
+    const result = createConfig({ API_KEYS: 'k1,k2' });
+
+    expect(result.auth.apiKeys.size).toBe(2);
+    expect(result.auth.apiKeys.get('k1')).toEqual({ id: 'client-1', name: 'Client 1' });
+    expect(result.auth.apiKeys.get('k2')).toEqual({ id: 'client-2', name: 'Client 2' });
+  });
+
+  it('trims and filters blank API keys', () => {
+    const result = createConfig({ API_KEYS: ' k1 , , k2 ' });
+
+    expect(result.auth.apiKeys.size).toBe(2);
+    expect(result.auth.apiKeys.get('k1')).toEqual({ id: 'client-1', name: 'Client 1' });
+    expect(result.auth.apiKeys.get('k2')).toEqual({ id: 'client-2', name: 'Client 2' });
+  });
+
+  it('accepts ratio 0 and 1 but rejects 1.1', () => {
+    expect(
+      createConfig({ LOG_READINESS_HIGH_WATER_MARK_RATIO: '0' }).queue.readinessHighWaterMarkRatio,
+    ).toBe(0);
+    expect(
+      createConfig({ LOG_READINESS_HIGH_WATER_MARK_RATIO: '1' }).queue.readinessHighWaterMarkRatio,
+    ).toBe(1);
+    expect(() => createConfig({ LOG_READINESS_HIGH_WATER_MARK_RATIO: '1.1' })).toThrow();
+  });
+
+  it('defaults LOG_LEVEL to "info" and accepts arbitrary string', () => {
+    expect(createConfig({}).logging.level).toBe('info');
+    expect(createConfig({ LOG_LEVEL: 'trace' }).logging.level).toBe('trace');
+    expect(createConfig({ LOG_LEVEL: 'anything-goes' }).logging.level).toBe('anything-goes');
+  });
+
+  it('leaves OTEL_EXPORTER_OTLP_ENDPOINT undefined when unset', () => {
+    const result = createConfig({});
+
+    expect(result.otel.exporterEndpoint).toBeUndefined();
   });
 });
