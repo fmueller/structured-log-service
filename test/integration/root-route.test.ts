@@ -28,5 +28,6 @@ describe('GET /', () => {
     const response = await request(app).get('/not-root').set('Authorization', 'Bearer dev-api-key');
 
     expect(response.status).toBe(404);
+    expect(response.body).toEqual({ error: 'not_found' });
   });
 });
