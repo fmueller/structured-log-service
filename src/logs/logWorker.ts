@@ -4,6 +4,7 @@ import { logger } from '../observability/logger';
 import { LogQueue } from './logQueue';
 import { sleep, type LogProcessor } from './logProcessor';
 import { validateWorkerConfig, type LogWorkerConfig } from './logWorkerConfig';
+import { getServiceName } from './serviceName';
 import type { ProcessingResult, QueuedLogEntry } from './types';
 
 export class LogWorker {
@@ -241,14 +242,6 @@ export class LogWorker {
     }
     return this.config.retryBackoffBaseMs * 2 ** retryCount;
   }
-}
-
-function getServiceName(entry: QueuedLogEntry): string {
-  const value = entry.record.meta.service;
-  if (typeof value === 'string' && value.length > 0) {
-    return value;
-  }
-  return 'unknown';
 }
 
 function normalizeError(error: unknown): Error {

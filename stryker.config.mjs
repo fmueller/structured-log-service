@@ -3,7 +3,7 @@ const config = {
   checkers: ['typescript'],
   plugins: ['@stryker-mutator/typescript-checker', '@stryker-mutator/vitest-runner'],
   coverageAnalysis: 'off',
-  mutate: ['src/**/*.ts', '!src/index.ts', '!src/telemetry/**', '!src/logs/logWorker.ts'],
+  mutate: ['src/**/*.ts', '!src/index.ts', '!src/telemetry/**'],
   reporters: ['clear-text', 'html'],
   testRunner: 'vitest',
   thresholds: {

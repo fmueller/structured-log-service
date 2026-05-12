@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
 import { ROOT_CONTEXT } from '@opentelemetry/api';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LogQueue } from '../../src/logs/logQueue';
 import { LogWorker } from '../../src/logs/logWorker';
 import type { LogWorkerConfig } from '../../src/logs/logWorkerConfig';
 import type { LogRecord, QueuedLogEntry } from '../../src/logs/types';
+import { logger } from '../../src/observability/logger';
 import { FakeProcessor } from '../helpers/fakes';
 import { waitUntil } from '../helpers/waitUntil';
 
@@ -234,5 +235,225 @@ describe('LogWorker', () => {
     expect(() => new LogWorker(queue, fake, { ...baseConfig, retryBackoffBaseMs: -1 })).toThrow(
       /retryBackoffBaseMs/,
     );
+  });
+
+  it('isRunning() returns false before start()', () => {
+    const queue = new LogQueue(10);
+    const fake = new FakeProcessor();
+    worker = new LogWorker(queue, fake, baseConfig);
+
+    expect(worker.isRunning()).toBe(false);
+  });
+
+  it('isRunning() returns true after start()', () => {
+    const queue = new LogQueue(10);
+    const fake = new FakeProcessor();
+    worker = new LogWorker(queue, fake, baseConfig);
+
+    worker.start();
+
+    expect(worker.isRunning()).toBe(true);
+  });
+
+  it('start() called twice does not reset the running state', () => {
+    const queue = new LogQueue(10);
+    const fake = new FakeProcessor();
+    worker = new LogWorker(queue, fake, baseConfig);
+
+    worker.start();
+    worker.start();
+
+    expect(worker.isRunning()).toBe(true);
+  });
+
+  it('notify() before start() does not process queued entries', async () => {
+    const queue = new LogQueue(10);
+    const fake = new FakeProcessor();
+    worker = new LogWorker(queue, fake, baseConfig);
+
+    queue.enqueueMany([makeEntry()]);
+    worker.notify();
+
+    await new Promise((r) => setTimeout(r, 150));
+
+    expect(fake.processed).toHaveLength(0);
+  });
+
+  it('continues polling and processes a late-arriving entry without notify()', async () => {
+    const queue = new LogQueue(10);
+    const fake = new FakeProcessor();
+    worker = new LogWorker(queue, fake, { ...baseConfig, pollIntervalMs: 50 });
+
+    worker.start();
+    queue.enqueueMany([makeEntry()]);
+    worker.notify();
+    await waitUntil(() => fake.processed.length === 1, 1_000);
+
+    queue.enqueueMany([makeEntry()]);
+
+    await waitUntil(() => fake.processed.length === 2, 500);
+    expect(fake.processed).toHaveLength(2);
+  });
+
+  it('notify() short-circuits a long poll interval after the queue has gone quiet', async () => {
+    const queue = new LogQueue(10);
+    const fake = new FakeProcessor();
+    worker = new LogWorker(queue, fake, { ...baseConfig, pollIntervalMs: 5_000 });
+
+    worker.start();
+    // Give the initial start-time tick time to run against an empty queue,
+    // so it schedules the next tick 5s away.
+    await new Promise((r) => setTimeout(r, 30));
+
+    const startedAt = Date.now();
+    queue.enqueueMany([makeEntry()]);
+    worker.notify();
+    await waitUntil(() => fake.processed.length === 1, 1_000);
+    const elapsed = Date.now() - startedAt;
+
+    expect(elapsed).toBeLessThan(500);
+  });
+});
+
+describe('LogWorker observability', () => {
+  let worker: LogWorker | undefined;
+  let info: ReturnType<typeof vi.spyOn>;
+  let warn: ReturnType<typeof vi.spyOn>;
+  let error: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    info = vi.spyOn(logger, 'info').mockImplementation(() => undefined);
+    warn = vi.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    error = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(async () => {
+    if (worker) {
+      await worker.drain(500);
+    }
+    vi.restoreAllMocks();
+  });
+
+  it('emits log_processing_succeeded with entryId, clientId, retryCount, processingMs on success', async () => {
+    const queue = new LogQueue(10);
+    const fake = new FakeProcessor();
+    worker = new LogWorker(queue, fake, baseConfig);
+
+    const entry = makeEntry();
+    worker.start();
+    queue.enqueueMany([entry]);
+    worker.notify();
+
+    await waitUntil(() => fake.processed.length === 1);
+
+    const successCall = info.mock.calls.find(
+      (call) => (call[0] as { type?: string }).type === 'log_processing_succeeded',
+    );
+    expect(successCall).toBeDefined();
+    const [payload, msg] = successCall as [Record<string, unknown>, string];
+    expect(msg).toBe('log processing succeeded');
+    expect(payload).toMatchObject({
+      type: 'log_processing_succeeded',
+      entryId: entry.id,
+      clientId: entry.clientId,
+      retryCount: 0,
+    });
+    expect(typeof payload.processingMs).toBe('number');
+    expect(payload.processingMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it('emits log_processing_attempt_failed for each retry with finalAttempt: false until exhaustion', async () => {
+    const queue = new LogQueue(10);
+    const fake = new FakeProcessor({ failTimes: 2 });
+    worker = new LogWorker(queue, fake, baseConfig);
+
+    const entry = makeEntry();
+    worker.start();
+    queue.enqueueMany([entry]);
+    worker.notify();
+
+    await waitUntil(() => fake.processed.length === 1);
+
+    const attemptFailed = warn.mock.calls.filter(
+      (call) => (call[0] as { type?: string }).type === 'log_processing_attempt_failed',
+    );
+    expect(attemptFailed).toHaveLength(2);
+    expect(attemptFailed[0]?.[0]).toMatchObject({
+      type: 'log_processing_attempt_failed',
+      entryId: entry.id,
+      clientId: entry.clientId,
+      retryCount: 0,
+      finalAttempt: false,
+    });
+    expect(attemptFailed[1]?.[0]).toMatchObject({
+      retryCount: 1,
+      finalAttempt: false,
+    });
+  });
+
+  it('emits log_processing_failed with attempts and the full record when retries are exhausted', async () => {
+    const queue = new LogQueue(10);
+    const fake = new FakeProcessor({ failTimes: Number.POSITIVE_INFINITY });
+    worker = new LogWorker(queue, fake, baseConfig);
+
+    const entry = makeEntry(
+      makeRecord({ message: 'unique-msg', meta: { service: 'svc-x', other: 1 } }),
+    );
+    worker.start();
+    queue.enqueueMany([entry]);
+    worker.notify();
+
+    await waitUntil(() => fake.attempts === 4);
+    // Yield the event loop so the final logger.error call completes.
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(error).toHaveBeenCalledTimes(1);
+    const [payload, msg] = error.mock.calls[0] as [Record<string, unknown>, string];
+    expect(msg).toBe('log processing failed');
+    expect(payload).toMatchObject({
+      type: 'log_processing_failed',
+      entryId: entry.id,
+      clientId: entry.clientId,
+      attempts: 4,
+      record: {
+        timestamp: entry.record.timestamp,
+        level: entry.record.level,
+        message: 'unique-msg',
+        meta: { service: 'svc-x', other: 1 },
+      },
+    });
+  });
+
+  it('with retryBackoffBaseMs: 0, drain after a failure completes promptly (no backoff sleep)', async () => {
+    const queue = new LogQueue(10);
+    const fake = new FakeProcessor({ failTimes: 2 });
+    worker = new LogWorker(queue, fake, { ...baseConfig, retryBackoffBaseMs: 0 });
+
+    const startedAt = Date.now();
+    worker.start();
+    queue.enqueueMany([makeEntry()]);
+    worker.notify();
+    await waitUntil(() => fake.processed.length === 1);
+    const elapsed = Date.now() - startedAt;
+
+    expect(elapsed).toBeLessThan(50);
+    expect(fake.attempts).toBe(3);
+  });
+
+  it('applies exponential backoff across three failures (base * 2^retryCount)', async () => {
+    const queue = new LogQueue(10);
+    const fake = new FakeProcessor({ failTimes: 3 });
+    worker = new LogWorker(queue, fake, { ...baseConfig, retryBackoffBaseMs: 20 });
+
+    const startedAt = Date.now();
+    worker.start();
+    queue.enqueueMany([makeEntry()]);
+    worker.notify();
+    await waitUntil(() => fake.processed.length === 1, 3_000);
+    const elapsed = Date.now() - startedAt;
+
+    // Three failures -> sleeps of 20*2^0 + 20*2^1 + 20*2^2 = 20+40+80 = 140ms.
+    expect(elapsed).toBeGreaterThanOrEqual(140);
+    expect(fake.attempts).toBe(4);
   });
 });
