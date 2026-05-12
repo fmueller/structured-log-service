@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createApp } from '../../src/app';
 import type { LogWorker } from '../../src/logs/logWorker';
+import { makeConfig } from '../helpers/config';
 
 describe('app error handlers', () => {
   const workers: LogWorker[] = [];
@@ -26,16 +27,14 @@ describe('app error handlers', () => {
   });
 
   it('returns 413 payload_too_large when the body exceeds jsonBodyLimit', async () => {
-    const { app, worker } = createApp();
+    const { app, worker } = createApp(makeConfig({ JSON_BODY_LIMIT: '1kb' }));
     workers.push(worker);
-
-    const oversizedMessage = 'a'.repeat(1_500_000);
 
     const response = await request(app)
       .post('/logs/json')
       .set('Authorization', 'Bearer dev-api-key')
       .set('Content-Type', 'application/json')
-      .send(JSON.stringify({ message: oversizedMessage }));
+      .send(JSON.stringify({ message: 'a'.repeat(2_048) }));
 
     expect(response.status).toBe(413);
     expect(response.body).toEqual({ error: 'payload_too_large' });

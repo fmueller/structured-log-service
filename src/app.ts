@@ -7,7 +7,7 @@ import express, {
 
 import { InMemoryApiKeyStore } from './auth/apiKeyStore';
 import { createAuthMiddleware } from './auth/authMiddleware';
-import { config } from './config';
+import { config, type Config } from './config';
 import { createHealthRoutes } from './http/healthRoutes';
 import { LogQueue } from './logs/logQueue';
 import { StdoutLogProcessor } from './logs/logProcessor';
@@ -43,23 +43,24 @@ const bodyParserErrorHandler: ErrorRequestHandler = (err, _req, res, next) => {
   next(err);
 };
 
-export function createApp(): CreatedApp {
+export function createApp(overrideConfig?: Config): CreatedApp {
+  const cfg = overrideConfig ?? config;
   const app = express();
 
-  app.use(express.json({ limit: config.http.jsonBodyLimit }));
+  app.use(express.json({ limit: cfg.http.jsonBodyLimit }));
   app.use(bodyParserErrorHandler);
 
-  const apiKeyStore = new InMemoryApiKeyStore(config.auth.apiKeys);
-  const rateLimiter = new FixedWindowRateLimiter(config.rateLimit);
-  const queue = new LogQueue(config.queue.maxSize);
-  const processor = new StdoutLogProcessor(config.worker.processingDelayMs);
-  const worker = new LogWorker(queue, processor, config.worker);
+  const apiKeyStore = new InMemoryApiKeyStore(cfg.auth.apiKeys);
+  const rateLimiter = new FixedWindowRateLimiter(cfg.rateLimit);
+  const queue = new LogQueue(cfg.queue.maxSize);
+  const processor = new StdoutLogProcessor(cfg.worker.processingDelayMs);
+  const worker = new LogWorker(queue, processor, cfg.worker);
   worker.start();
 
   app.get('/', (_req: Request, res: Response) => {
     res.json({ name: 'structured-log-service', status: 'ok' });
   });
-  app.use(createHealthRoutes(queue, worker, config.queue.readinessHighWaterMarkRatio));
+  app.use(createHealthRoutes(queue, worker, cfg.queue.readinessHighWaterMarkRatio));
 
   app.use(createAuthMiddleware(apiKeyStore));
   app.use(createRateLimitMiddleware(rateLimiter));
