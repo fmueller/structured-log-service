@@ -4,17 +4,25 @@ import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createApp } from '../../src/app';
+import type { LogWorker } from '../../src/logs/logWorker';
 import { closeServer } from '../helpers/server';
 
 describe('root route e2e', () => {
   const servers: Server[] = [];
+  const workers: LogWorker[] = [];
 
   afterEach(async () => {
-    await Promise.all(servers.splice(0).map((server) => closeServer(server)));
+    try {
+      await Promise.all(servers.splice(0).map((server) => closeServer(server)));
+    } finally {
+      await Promise.all(workers.splice(0).map((worker) => worker.drain(1000)));
+    }
   });
 
   it('responds over a live HTTP server', async () => {
-    const server = createApp().listen(0);
+    const { app, worker } = createApp();
+    workers.push(worker);
+    const server = app.listen(0);
     servers.push(server);
 
     await new Promise<void>((resolve) => {
