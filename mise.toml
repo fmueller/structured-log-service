@@ -54,6 +54,18 @@ run = "pnpm test:mutate"
 description = "Build Docker image locally"
 run = "docker build -t structured-log-service:local ."
 
+[tasks."compose:up"]
+description = "Start app + otelcol (no synthetic load)"
+run = "docker compose up --build"
+
+[tasks."compose:smoke"]
+description = "Start app + otelcol + synthetic producer (loadtest profile)"
+run = "docker compose --profile loadtest up --build"
+
+[tasks."compose:down"]
+description = "Stop and remove Compose stack"
+run = "docker compose --profile loadtest down --remove-orphans"
+
 [tasks.dev]
 description = "Run dev server"
 run = "pnpm dev"

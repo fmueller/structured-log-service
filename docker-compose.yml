@@ -1,0 +1,52 @@
+services:
+  app:
+    build: .
+    container_name: log-ingestion-service
+    ports:
+      - '3003:3003'
+    environment:
+      PORT: '3003'
+      API_KEYS: 'dev-api-key,another-test-key'
+      LOG_MAX_BATCH_SIZE: '1000'
+      LOG_QUEUE_MAX_SIZE: '1000'
+      LOG_WORKER_CONCURRENCY: '5'
+      LOG_WORKER_MAX_RETRIES: '3'
+      LOG_PROCESSING_DELAY_MS: '100'
+      OTEL_SERVICE_NAME: 'log-ingestion-service'
+      OTEL_EXPORTER_OTLP_ENDPOINT: 'http://otelcol:4318'
+      OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf'
+    depends_on:
+      otelcol:
+        condition: service_started
+
+  otelcol:
+    image: otel/opentelemetry-collector-contrib:0.152.0
+    container_name: otelcol
+    command: ['--config=/etc/otelcol-contrib/config.yaml']
+    volumes:
+      - ./otelcol.yaml:/etc/otelcol-contrib/config.yaml:ro
+    environment:
+      DASH0_OTLP_ENDPOINT: '${DASH0_OTLP_ENDPOINT}'
+      DASH0_AUTH_TOKEN: '${DASH0_AUTH_TOKEN}'
+    ports:
+      - '4317:4317'
+      - '4318:4318'
+
+  log-producer:
+    image: node:24-alpine
+    container_name: log-producer
+    working_dir: /scripts
+    volumes:
+      - ./scripts:/scripts:ro
+    environment:
+      INGESTION_URL: 'http://app:3003/logs/json'
+      API_KEY: 'dev-api-key'
+      BATCH_SIZE: '10'
+      INTERVAL_MS: '500'
+      INJECT_FAILURES: 'false'
+    command: ['node', 'send-logs.mjs']
+    depends_on:
+      app:
+        condition: service_started
+    profiles:
+      - loadtest
