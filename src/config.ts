@@ -6,7 +6,6 @@ const envSchema = z.object({
   JSON_BODY_LIMIT: z.string().default('1mb'),
   API_KEYS: z.string().default('dev-api-key'),
 
-  RATE_LIMIT_ALGORITHM: z.enum(['fixed', 'sliding']).default('fixed'),
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(10),
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(1_000),
 
@@ -50,7 +49,6 @@ export function createConfig(env: NodeJS.ProcessEnv = process.env) {
     http: { jsonBodyLimit: parsed.JSON_BODY_LIMIT },
     auth: { apiKeys: parseApiKeys(parsed.API_KEYS) },
     rateLimit: {
-      algorithm: parsed.RATE_LIMIT_ALGORITHM,
       maxRequests: parsed.RATE_LIMIT_MAX_REQUESTS,
       windowMs: parsed.RATE_LIMIT_WINDOW_MS,
     },

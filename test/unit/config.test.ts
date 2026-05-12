@@ -14,7 +14,6 @@ describe('createConfig', () => {
       name: 'Client 1',
     });
     expect(result.rateLimit).toEqual({
-      algorithm: 'fixed',
       maxRequests: 10,
       windowMs: 1_000,
     });
@@ -46,10 +45,6 @@ describe('createConfig', () => {
 
   it('rejects non-positive PORT', () => {
     expect(() => createConfig({ PORT: '0' })).toThrow();
-  });
-
-  it('rejects unknown rate-limit algorithm', () => {
-    expect(() => createConfig({ RATE_LIMIT_ALGORITHM: 'leakybucket' })).toThrow();
   });
 
   it('parses multiple API keys', () => {
