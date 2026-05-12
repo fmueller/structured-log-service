@@ -8,7 +8,6 @@ const config = {
     '!src/index.ts',
     '!src/telemetry/**',
     '!src/logs/logRoutes.ts',
-    '!src/logs/logProcessor.ts',
     '!src/logs/logWorker.ts',
   ],
   reporters: ['clear-text', 'html'],
