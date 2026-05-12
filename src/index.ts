@@ -1,13 +1,13 @@
 // IMPORTANT: tracing.ts must be imported BEFORE pino, express, or http so the
 // OpenTelemetry require-hook instrumentations can patch them at require time.
-import { startTelemetry } from './telemetry/tracing';
+// Importing it has the side effect of starting the SDK.
+import { sdk } from './telemetry/tracing';
 
 import { createApp } from './app';
 import { config } from './config';
 import { logger } from './observability/logger';
 
 async function main(): Promise<void> {
-  const telemetry = await startTelemetry();
   const { app, worker } = createApp();
 
   const server = app.listen(config.port, () => {
@@ -26,7 +26,7 @@ async function main(): Promise<void> {
         'drain timed out with queued entries still pending',
       );
     }
-    await telemetry.shutdown();
+    await sdk.shutdown();
     process.exit(0);
   }
 

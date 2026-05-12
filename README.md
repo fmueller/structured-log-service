@@ -9,7 +9,7 @@ HTTP log ingestion service with async processing and OpenTelemetry traces, metri
 
 ## What this service does
 
-`structured-log-service` accepts batches of structured log records over HTTP, validates them, and processes them asynchronously through an in-memory bounded queue and a worker pool. Requests are authenticated with bearer API keys and rate-limited per client. The worker writes each record as a single JSON line to STDOUT and, when `OTEL_EXPORTER_OTLP_ENDPOINT` is configured, also ships logs over OTLP via `pino-opentelemetry-transport`. Pino is wired so every emitted log line carries `trace_id` and `span_id` for the request and worker spans. The Node OpenTelemetry SDK is wired with `@opentelemetry/auto-instrumentations-node` and a periodic OTLP metric reader, so the process emits traces, metrics, and logs over OTLP to whatever collector it is pointed at. Kubernetes-style `/livez` and `/readyz` probes report liveness and queue-depth-aware readiness.
+`structured-log-service` accepts batches of structured log records over HTTP, validates them, and processes them asynchronously through an in-memory bounded queue and a worker pool. Requests are authenticated with bearer API keys and rate-limited per client. The worker writes each record as a single JSON line to STDOUT and, when `OTEL_EXPORTER_OTLP_ENDPOINT` is configured, `@opentelemetry/instrumentation-pino` also feeds the same records into the OpenTelemetry Logs SDK so they ship to the collector over OTLP with the proto-level `traceId`/`spanId` populated from the active span. The Node OpenTelemetry SDK is wired with `@opentelemetry/auto-instrumentations-node` and a periodic OTLP metric reader, so the process emits traces, metrics, and logs over OTLP to whatever collector it is pointed at. Kubernetes-style `/livez` and `/readyz` probes report liveness and queue-depth-aware readiness.
 
 ## Quick start
 
@@ -70,7 +70,7 @@ Content-Type: application/json
 
 ## Docker Compose smoke test
 
-The smoke test exercises the full pipeline end-to-end: HTTP → app → queue → worker → (STDOUT JSON for local visibility **and** Pino → `pino-opentelemetry-transport` → OTLP) → OpenTelemetry Collector → **[Dash0](https://www.dash0.com/)**. The OTel SDK in the app also ships traces and process/HTTP metrics over OTLP to the same collector. Dash0 is the observability backend used for dashboards, trace inspection, and log search; the Collector forwards traces, logs, and metrics to it via OTLP. The Collector's `debug` exporter still prints locally even when Dash0 credentials are absent, so the pipeline is usable for local-only checks too.
+The smoke test exercises the full pipeline end-to-end: HTTP → app → queue → worker → (STDOUT JSON for local visibility **and** Pino → `instrumentation-pino` → OpenTelemetry Logs SDK → OTLP) → OpenTelemetry Collector → **[Dash0](https://www.dash0.com/)**. The OTel SDK in the app also ships traces and process/HTTP metrics over OTLP to the same collector. Dash0 is the observability backend used for dashboards, trace inspection, and log search; the Collector forwards traces, logs, and metrics to it via OTLP. The Collector's `debug` exporter still prints locally even when Dash0 credentials are absent, so the pipeline is usable for local-only checks too.
 
 You will need a Dash0 account to see the data downstream — fill the OTLP endpoint and ingest auth token in `.env`:
 
@@ -142,7 +142,7 @@ readinessProbe:
 - **Backpressure with `Retry-After`.** Both the rate limiter (`429`) and the queue (`503 queue_full`) set honest retry signals so clients can back off cleanly rather than guess.
 - **Retry semantics.** `LOG_WORKER_MAX_RETRIES` counts retries _after_ the initial attempt: `3` means 1 initial + 3 retries = 4 attempts total. Backoff is `attempt × LOG_WORKER_RETRY_BACKOFF_BASE_MS`.
 - **Pluggable rate limit.** A `RateLimiter` interface fronts the in-memory fixed-window implementation. A sliding-window variant (to close the boundary-burst gap) can drop in behind the same interface; it is intentionally deferred for this assignment.
-- **OTel + Pino correlation.** The auto-instrumentation bundle wires the OpenTelemetry Pino instrumentation, which injects `trace_id` and `span_id` into every log line emitted within an active span. When `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the logger attaches `pino-opentelemetry-transport` in addition to STDOUT, so logs reach the collector over OTLP rather than relying on a STDOUT scraper. Worker `log.process` spans expose retry count, attempt outcome, and client id as attributes — the pivot points for Dash0 dashboards and trace lookups.
+- **OTel + Pino correlation.** The auto-instrumentation bundle wires `@opentelemetry/instrumentation-pino`, which does two things on every active-span log call: it injects `trace_id`/`span_id` into the JSON line on STDOUT (log correlation), and it multistreams the same record to the OpenTelemetry Logs SDK so the OTLP exporter ships it with the proto-level `traceId`/`spanId` set from the active context (log sending). The SDK is started at module load in `src/telemetry/tracing.ts` so the require-time patch is in place before `pino` is first required. Worker `log.process` spans expose retry count, attempt outcome, and client id as attributes — the pivot points for Dash0 dashboards and trace lookups.
 - **Drain-on-shutdown.** On SIGTERM the process closes the HTTP server, then runs `worker.drain(timeoutMs)` (event-driven race against a timer), then shuts down the OTel SDK, then exits. This keeps in-flight batches from being dropped during rolling deploys.
 - **`/livez` vs `/readyz`.** Liveness is restart-only: it returns `200` as long as the process is running, so Kubernetes only restarts on a hard crash. Readiness is load-shed-only: it returns `503` when the worker is stopped or the queue is above the high-water mark, so the pod is pulled out of the Service backend without being restarted.
 
@@ -153,7 +153,6 @@ readinessProbe:
 - Distributed Redis-backed sliding-window rate limiter.
 - Idempotency keys / batch-level deduplication.
 - Multi-instance retry backoff with jitter to avoid thundering-herd retries.
-- OpenTelemetry logs SDK as a second emission path (in addition to Pino → stdout).
 - `InMemorySpanExporter`-based integration tests asserting span attributes and parent linkage.
 - Per-tenant fairness via round-robin sub-queues so one noisy client cannot starve others.
 - Per-IP pre-auth rate limit to dampen credential-stuffing against `/logs/json`.

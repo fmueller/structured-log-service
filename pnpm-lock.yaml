@@ -49,9 +49,6 @@ importers:
       pino:
         specifier: ^10.3.1
         version: 10.3.1
-      pino-opentelemetry-transport:
-        specifier: ^3.0.0
-        version: 3.0.0(@opentelemetry/api@1.9.1)(pino@10.3.1)
       zod:
         specifier: ^4.1.12
         version: 4.4.3
@@ -2289,9 +2286,6 @@ packages:
     resolution: {integrity: sha512-6IpQ7mKUxRcZNLIObR0hz7lxsapSSIYNZJwXPGeF0mTVqGKFIXj1DQcMoT22S3ROcLyY/rz0PWaWZ9ayWmad9g==}
     engines: {node: '>= 0.8.0'}
 
-  otlp-logger@2.1.0:
-    resolution: {integrity: sha512-UlhiSefpUsuP6hRWpX9UMje71ehvtAhrgXPUUiiqQ1miSwbjLCG+f1TN/mz7dWiOuhwl+VDKi9j+S8DJYAv5bA==}
-
   p-limit@3.1.0:
     resolution: {integrity: sha512-TYOanM3wGwNGsZN2cVTYPArw454xnXj5qmWF1bEoAc4+cU/ol7GVh7odevjp1FNHduHc3KZMcFduxU5Xc6uJRQ==}
     engines: {node: '>=10'}
@@ -2350,11 +2344,6 @@ packages:
 
   pino-abstract-transport@3.0.0:
     resolution: {integrity: sha512-wlfUczU+n7Hy/Ha5j9a/gZNy7We5+cXp8YL+X+PG8S0KXxw7n/JXA3c46Y0zQznIJ83URJiwy7Lh56WLokNuxg==}
-
-  pino-opentelemetry-transport@3.0.0:
-    resolution: {integrity: sha512-t/fH23X+/pSSaUTdD7hq8FbT5BtTnUvXDojxKNVGX/auDPpDshG58t2yxFr2cmMgpQetIKBCcsH3KmcJXJJ5cQ==}
-    peerDependencies:
-      pino: ^10.0.0
 
   pino-std-serializers@7.1.0:
     resolution: {integrity: sha512-BndPH67/JxGExRgiX1dX0w1FvZck5Wa4aal9198SrRhZjH3GxKQUKIBnYJTdj2HDN3UQAS06HlfcSbQj2OHmaw==}
@@ -5268,17 +5257,6 @@ snapshots:
       type-check: 0.4.0
       word-wrap: 1.2.5
 
-  otlp-logger@2.1.0(@opentelemetry/api@1.9.1):
-    dependencies:
-      '@opentelemetry/api-logs': 0.217.0
-      '@opentelemetry/exporter-logs-otlp-grpc': 0.217.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/exporter-logs-otlp-http': 0.217.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/exporter-logs-otlp-proto': 0.217.0(@opentelemetry/api@1.9.1)
-      '@opentelemetry/resources': 2.7.1(@opentelemetry/api@1.9.1)
-      '@opentelemetry/sdk-logs': 0.217.0(@opentelemetry/api@1.9.1)
-    transitivePeerDependencies:
-      - '@opentelemetry/api'
-
   p-limit@3.1.0:
     dependencies:
       yocto-queue: 0.1.0
@@ -5322,14 +5300,6 @@ snapshots:
   pino-abstract-transport@3.0.0:
     dependencies:
       split2: 4.2.0
-
-  pino-opentelemetry-transport@3.0.0(@opentelemetry/api@1.9.1)(pino@10.3.1):
-    dependencies:
-      otlp-logger: 2.1.0(@opentelemetry/api@1.9.1)
-      pino: 10.3.1
-      pino-abstract-transport: 3.0.0
-    transitivePeerDependencies:
-      - '@opentelemetry/api'
 
   pino-std-serializers@7.1.0: {}
 
