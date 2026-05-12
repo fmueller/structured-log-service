@@ -20,10 +20,12 @@ export async function startTelemetry(): Promise<NodeSDK> {
       [ATTR_SERVICE_NAME]: config.otel.serviceName,
     }),
     traceExporter: endpoint ? new OTLPTraceExporter({ url: `${endpoint}/v1/traces` }) : undefined,
-    metricReader: endpoint
-      ? new PeriodicExportingMetricReader({
-          exporter: new OTLPMetricExporter({ url: `${endpoint}/v1/metrics` }),
-        })
+    metricReaders: endpoint
+      ? [
+          new PeriodicExportingMetricReader({
+            exporter: new OTLPMetricExporter({ url: `${endpoint}/v1/metrics` }),
+          }),
+        ]
       : undefined,
     instrumentations: [
       getNodeAutoInstrumentations({
