@@ -21,7 +21,7 @@ const envSchema = z.object({
   LOG_WORKER_DRAIN_TIMEOUT_MS: z.coerce.number().int().min(0).default(5_000),
 
   OTEL_SERVICE_NAME: z.string().default('log-ingestion-service'),
-  OTEL_EXPORTER_OTLP_ENDPOINT: z.string().optional(),
+  OTEL_EXPORTER_OTLP_ENDPOINT: z.url({ protocol: /^https?$/ }).optional(),
 
   LOG_LEVEL: z.string().default('info'),
 });

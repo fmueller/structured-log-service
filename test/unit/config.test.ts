@@ -84,4 +84,20 @@ describe('createConfig', () => {
 
     expect(result.otel.exporterEndpoint).toBeUndefined();
   });
+
+  it('accepts a valid OTEL_EXPORTER_OTLP_ENDPOINT URL', () => {
+    const result = createConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://otelcol:4318' });
+
+    expect(result.otel.exporterEndpoint).toBe('http://otelcol:4318');
+  });
+
+  it('rejects a non-URL OTEL_EXPORTER_OTLP_ENDPOINT', () => {
+    expect(() => createConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'not-a-url' })).toThrow();
+  });
+
+  it('rejects non-http(s) schemes for OTEL_EXPORTER_OTLP_ENDPOINT', () => {
+    expect(() => createConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'file:///etc/passwd' })).toThrow();
+    expect(() => createConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'javascript:alert(1)' })).toThrow();
+    expect(() => createConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'ftp://example.com' })).toThrow();
+  });
 });
