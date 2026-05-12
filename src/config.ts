@@ -31,6 +31,25 @@ export interface ApiKeyClient {
   name: string;
 }
 
+export interface Config {
+  port: number;
+  http: { jsonBodyLimit: string };
+  auth: { apiKeys: Map<string, ApiKeyClient> };
+  rateLimit: { maxRequests: number; windowMs: number };
+  logs: { maxBatchSize: number };
+  queue: { maxSize: number; readinessHighWaterMarkRatio: number };
+  worker: {
+    concurrency: number;
+    maxRetries: number;
+    processingDelayMs: number;
+    pollIntervalMs: number;
+    retryBackoffBaseMs: number;
+    drainTimeoutMs: number;
+  };
+  otel: { serviceName: string; exporterEndpoint: string | undefined };
+  logging: { level: string };
+}
+
 function parseApiKeys(raw: string): Map<string, ApiKeyClient> {
   return new Map(
     raw
@@ -41,7 +60,7 @@ function parseApiKeys(raw: string): Map<string, ApiKeyClient> {
   );
 }
 
-export function createConfig(env: NodeJS.ProcessEnv = process.env) {
+export function createConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const parsed = envSchema.parse(env);
 
   return {
@@ -73,4 +92,4 @@ export function createConfig(env: NodeJS.ProcessEnv = process.env) {
   };
 }
 
-export const config = createConfig();
+export const config: Config = createConfig();

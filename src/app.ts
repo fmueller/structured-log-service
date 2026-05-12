@@ -1,11 +1,11 @@
-import express, { Request, Response } from 'express';
+import express, { Application, Request, Response } from 'express';
 
-export function createApp() {
+export function createApp(): Application {
   const app = express();
 
   app.use(express.json());
 
-  app.get(/^\/$/, (_req: Request, res: Response) => {
+  app.get('/', (_req: Request, res: Response) => {
     res.json({ name: 'structured-log-service', status: 'ok' });
   });
 
