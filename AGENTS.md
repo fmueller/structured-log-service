@@ -68,6 +68,7 @@ Use these defaults unless a task requires otherwise.
 - Always run `mise run check` after every code change.
 - Keep functions focused and prefer direct code over unnecessary abstraction.
 - Follow the existing file and folder layout unless there is a clear reason to change it.
+- Do not reference files inside `specs/` from source code or tests (including comments). The `specs/` folder is `.gitignore`d, so any such reference is a dangling pointer for anyone without the local working copy. If a constraint or rationale matters at the code site, restate it inline.
 
 ### Naming and types
 
