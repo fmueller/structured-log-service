@@ -15,6 +15,7 @@ services:
       OTEL_SERVICE_NAME: 'log-ingestion-service'
       OTEL_EXPORTER_OTLP_ENDPOINT: 'http://otelcol:4318'
       OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf'
+      OTEL_RESOURCE_ATTRIBUTES: 'deployment.environment.name=development'
     depends_on:
       otelcol:
         condition: service_started
