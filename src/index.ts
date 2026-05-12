@@ -1,9 +1,22 @@
-import { createApp } from './app';
-import { config } from './config';
-import { logger } from './observability/logger';
+// Telemetry is imported and started before any other module so the
+// OpenTelemetry require-hook instrumentations patch pino and http before
+// those modules are pulled in via the dynamic imports below.
+import { startTelemetry } from './telemetry/tracing';
 
-const app = createApp();
+async function main(): Promise<void> {
+  await startTelemetry();
 
-app.listen(config.port, () => {
-  logger.info({ port: config.port }, 'Server started');
+  const { createApp } = await import('./app');
+  const { config } = await import('./config');
+  const { logger } = await import('./observability/logger');
+
+  const app = createApp();
+  app.listen(config.port, () => {
+    logger.info({ port: config.port }, 'Server started');
+  });
+}
+
+main().catch((error: unknown) => {
+  console.error('Failed to start service', error);
+  process.exit(1);
 });
