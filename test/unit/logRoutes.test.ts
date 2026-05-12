@@ -31,7 +31,12 @@ type Harness = {
 function buildHarness({
   injectClient = true,
   queueSize = 100,
-}: { injectClient?: boolean; queueSize?: number } = {}): Harness {
+  retryAfterSeconds = 1,
+}: {
+  injectClient?: boolean;
+  queueSize?: number;
+  retryAfterSeconds?: number;
+} = {}): Harness {
   const queue = new LogQueue(queueSize);
   const processor = new StdoutLogProcessor(0);
   const worker = new LogWorker(queue, processor, baseWorkerConfig);
@@ -49,7 +54,7 @@ function buildHarness({
     }
     next();
   });
-  app.use(createLogRoutes(queue, worker));
+  app.use(createLogRoutes(queue, worker, retryAfterSeconds));
 
   return { app, queue, worker };
 }
@@ -115,7 +120,7 @@ describe('createLogRoutes POST /logs/json', () => {
   });
 
   it('does not call worker.notify() when the queue rejects the batch', async () => {
-    const { app, queue, worker } = buildHarness({ queueSize: 2 });
+    const { app, queue, worker } = buildHarness({ queueSize: 2, retryAfterSeconds: 7 });
     // Pre-fill the queue so the next batch is rejected.
     queue.enqueueMany([
       {
@@ -139,6 +144,7 @@ describe('createLogRoutes POST /logs/json', () => {
 
     expect(response.status).toBe(503);
     expect(response.body).toEqual({ error: 'queue_full', queueDepth: 2, capacity: 2 });
+    expect(response.headers['retry-after']).toBe('7');
     expect(notify).not.toHaveBeenCalled();
   });
 

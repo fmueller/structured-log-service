@@ -9,7 +9,11 @@ import { LogBatchSchema } from './logRecordSchema';
 import { LogWorker } from './logWorker';
 import type { QueuedLogEntry } from './types';
 
-export function createLogRoutes(queue: LogQueue, worker: LogWorker): Router {
+export function createLogRoutes(
+  queue: LogQueue,
+  worker: LogWorker,
+  queueFullRetryAfterSeconds: number,
+): Router {
   const router = Router();
 
   router.post('/logs/json', (req: AuthenticatedRequest, res: Response) => {
@@ -45,6 +49,7 @@ export function createLogRoutes(queue: LogQueue, worker: LogWorker): Router {
 
     const result = queue.enqueueMany(entries);
     if (!result.accepted) {
+      res.setHeader('Retry-After', String(queueFullRetryAfterSeconds));
       res.status(503).json({
         error: 'queue_full',
         queueDepth: result.queueDepth,

@@ -57,6 +57,13 @@ export function createApp(overrideConfig?: Config): CreatedApp {
   const worker = new LogWorker(queue, processor, cfg.worker);
   worker.start();
 
+  // Conservative drain estimate: how long it takes one concurrent slot to free.
+  // Real production would track recent drain rate; this is honest and bounded.
+  const queueFullRetryAfterSeconds = Math.max(
+    1,
+    Math.ceil((cfg.worker.processingDelayMs * cfg.worker.concurrency) / 1000),
+  );
+
   app.get('/', (_req: Request, res: Response) => {
     res.json({ name: 'structured-log-service', status: 'ok' });
   });
@@ -65,7 +72,7 @@ export function createApp(overrideConfig?: Config): CreatedApp {
   app.use(createAuthMiddleware(apiKeyStore));
   app.use(createRateLimitMiddleware(rateLimiter));
 
-  app.use(createLogRoutes(queue, worker));
+  app.use(createLogRoutes(queue, worker, queueFullRetryAfterSeconds));
 
   app.use((_req: Request, res: Response) => {
     res.status(404).json({ error: 'not_found' });

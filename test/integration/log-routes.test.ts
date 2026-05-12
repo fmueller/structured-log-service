@@ -109,7 +109,7 @@ describe('POST /logs/json', () => {
     });
   });
 
-  it('returns 503 queue_full when the batch exceeds remaining capacity', async () => {
+  it('returns 503 queue_full with Retry-After when the batch exceeds remaining capacity', async () => {
     const { app, worker } = createApp(
       makeConfig({ LOG_QUEUE_MAX_SIZE: '1', LOG_READINESS_HIGH_WATER_MARK_RATIO: '1' }),
     );
@@ -124,5 +124,8 @@ describe('POST /logs/json', () => {
     expect(response.body.error).toBe('queue_full');
     expect(response.body.capacity).toBe(1);
     expect(response.body.queueDepth).toBe(0);
+    const retryAfter = Number(response.headers['retry-after']);
+    expect(Number.isInteger(retryAfter)).toBe(true);
+    expect(retryAfter).toBeGreaterThanOrEqual(1);
   });
 });
