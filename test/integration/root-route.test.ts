@@ -11,14 +11,17 @@ describe('GET /', () => {
     await Promise.all(workers.splice(0).map((worker) => worker.drain(1000)));
   });
 
-  it('returns scaffold status payload', async () => {
+  it('returns service identification banner', async () => {
     const { app, worker } = createApp();
     workers.push(worker);
 
     const response = await request(app).get('/');
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ name: 'structured-log-service', status: 'ok' });
+    expect(response.body).toEqual({
+      name: 'structured-log-service',
+      version: expect.stringMatching(/^\d+\.\d+\.\d+/),
+    });
   });
 
   it('does not match arbitrary non-root paths', async () => {
