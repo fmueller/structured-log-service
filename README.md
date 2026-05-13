@@ -38,11 +38,16 @@ Each capability with a pointer into the codebase.
 | Processing    | Simulated per-entry delay                                                   | `StdoutLogProcessor.process` (base + uniform jitter)                                              |
 | Processing    | Configurable concurrency (default 5)                                        | `LOG_WORKER_CONCURRENCY`, enforced in `LogWorker.tick`                                            |
 | Processing    | Retry up to 3 times with exponential backoff                                | `LogWorker.processWithRetries` (1 initial + 3 retries)                                            |
+| Processing    | Transient vs permanent failures (only transient retried)                    | `src/logs/transientProcessingError.ts`, `failureKind.ts`                                          |
+| Processing    | Optional chaos decorator: lognormal latency, failure injection, outliers    | `src/logs/chaosLogProcessor.ts`, `chaosPolicy.ts` (enabled via `LOG_CHAOS_ENABLED`)               |
 | Observability | `@opentelemetry/sdk-node`                                                   | `src/telemetry/tracing.ts` (started at module load)                                               |
 | Observability | Child span per entry                                                        | `LogWorker.processAttempt` → `tracer.startActiveSpan('log.process', …)`                           |
 | Observability | Attributes: `log.level`, `log.service`, `queue.depth`, `worker.retry_count` | `LogWorker.processAttempt`                                                                        |
 | Observability | `recordException` + `setStatus(ERROR)` on failure                           | `LogWorker.processAttempt` catch block                                                            |
+| Observability | Semantic-attribute promotion to top-level Pino fields                       | `src/logs/semanticAttributes.ts` (`http.*`, `user.*`, `payment.*`, `log.service`, …)              |
+| Observability | Per-record service identity via `log.service → resource.service.name`       | `otelcol.yaml` (`groupbyattrs/log-service`, `transform/rename-log-service`)                       |
 | Observability | Dash0 backend                                                               | `otelcol.yaml` (`otlp/dash0` exporter); see [Observability with Dash0](#observability-with-dash0) |
+| Smoke         | Synthetic multi-service producer with named scenarios                       | `scripts/send-logs.mjs`, `scripts/producer/*`                                                     |
 
 ## How it works
 
@@ -103,18 +108,21 @@ A short orientation for new readers — the highest-leverage files to start with
 
 The worker creates one span per log entry (`log.process`, `SpanKind.INTERNAL`) as a child of the HTTP request span. The parent context is captured at ingest in `logRoutes.ts` and re-entered in the worker with `context.with(entry.parentContext, …)`, so the trace stays intact across the queue hop.
 
-**Span attributes set on every entry:**
+**Span attributes set per entry** (chaos-prefixed rows only appear when `LOG_CHAOS_ENABLED=true`):
 
-| Attribute              | Source                                       |
-| ---------------------- | -------------------------------------------- |
-| `log.level`            | record `level`                               |
-| `log.service`          | `meta.service` (via `getServiceName(entry)`) |
-| `queue.depth`          | `LogQueue.depth()` at dispatch time          |
-| `worker.retry_count`   | current retry index (0..maxRetries)          |
-| `log.message.length`   | record `message.length`                      |
-| `log.entry_id`         | UUID assigned at ingest                      |
-| `client.id`            | authenticated client id                      |
-| `worker.processing_ms` | measured per attempt                         |
+| Attribute                     | Source                                                                            |
+| ----------------------------- | --------------------------------------------------------------------------------- |
+| `log.level`                   | record `level`                                                                    |
+| `log.service`                 | `meta.service` (via `getServiceName(entry)`)                                      |
+| `queue.depth`                 | `LogQueue.depth()` at dispatch time                                               |
+| `worker.retry_count`          | current retry index (0..maxRetries)                                               |
+| `log.message.length`          | record `message.length`                                                           |
+| `log.entry_id`                | UUID assigned at ingest                                                           |
+| `client.id`                   | authenticated client id                                                           |
+| `worker.processing_ms`        | measured per attempt                                                              |
+| `worker.failure_kind`         | `none \| transient \| permanent`, classified in `LogWorker.processAttempt`        |
+| `chaos.injected_latency_ms`   | (chaos only) milliseconds the decorator slept before delegating                   |
+| `chaos.injected_failure_kind` | (chaos only) `none \| transient \| permanent`, set in `ChaosLogProcessor.process` |
 
 On failure, the catch block calls `span.recordException(error)` and `span.setStatus({ code: SpanStatusCode.ERROR, message })` — visible in Dash0 as red spans with the exception payload attached.
 
@@ -125,7 +133,7 @@ On failure, the catch block calls `span.recordException(error)` and `span.setSta
 - Filter spans by `status.code = ERROR` to see retry storms — the same `log.entry_id` will appear up to 4 times (1 initial + 3 retries) with increasing `worker.retry_count`.
 - Group by `log.service` to attribute work to upstream emitters (`meta.service`).
 - Sort by `worker.processing_ms` to spot slow records.
-- The smoke setup injects two distinct error messages so you can split server-side vs client-flagged failures by `exception.message`.
+- Group by `worker.failure_kind` to separate retryable (`transient`) from non-retryable (`permanent`) failures. With chaos enabled in compose the decorator emits `chaos: simulated transient failure` and `chaos: simulated permanent failure`; the inner `StdoutLogProcessor` still emits `Simulated log processing failure` (client-flagged via `meta.simulate_processing_failure`) and `Injected artificial processing failure` (server-side via `LOG_PROCESSING_FAILURE_RATE_PCT`). Filter by `exception.message` to split the four populations.
 
 ## Example request
 
@@ -165,7 +173,7 @@ Mutation score is gated at ≥ 70%.
 
 ## Docker Compose smoke test
 
-Exercises the full pipeline end-to-end: `HTTP → app → queue → worker → (STDOUT JSON + Pino → instrumentation-pino → OpenTelemetry Logs SDK → OTLP) → OpenTelemetry Collector → Dash0`. The Collector's `debug` exporter still prints locally even when Dash0 credentials are absent, so the pipeline is usable for local-only checks.
+Exercises the full pipeline end-to-end: `smoke-producer → HTTP → app → queue → worker → chaos decorator → (STDOUT JSON + Pino → instrumentation-pino → OpenTelemetry Logs SDK → OTLP) → OpenTelemetry Collector → Dash0`. The Collector's `debug` exporter still prints locally even when Dash0 credentials are absent, so the pipeline is usable for local-only checks.
 
 You will need a Dash0 account to see the data downstream:
 
@@ -173,19 +181,34 @@ You will need a Dash0 account to see the data downstream:
 cp .env.example .env
 # Edit .env: set DASH0_OTLP_ENDPOINT and DASH0_AUTH_TOKEN
 
-mise run compose:up      # app + otelcol only
-mise run compose:smoke   # app + otelcol + synthetic producer (loadtest profile)
-mise run compose:down    # tear down, including loadtest containers
+mise run compose:up                        # app + otelcol only
+mise run compose:smoke                     # app + otelcol + synthetic producer (loadtest profile)
+BATCH_LIMIT=200 mise run compose:smoke:once     # emit 200 batches then exit 0
+SCENARIO=payment-outage mise run compose:smoke:scenario  # lock to one scenario
+mise run compose:down                      # tear down, including loadtest containers
 ```
 
-Without the `loadtest` profile you drive traffic with curl. With it, `scripts/send-logs.mjs` posts a batch every 500 ms. Watch the Collector logs for `debug` exporter output and the app logs for `processed_log` lines with populated `trace_id`/`span_id`, then pivot on those IDs in Dash0.
+Without the `loadtest` profile you drive traffic with curl. With it, the `smoke-producer` container posts a batch every 500 ms across five simulated upstream services, cycling through named scenarios. Watch the Collector logs for `debug` exporter output and the app logs for `processed_log` lines with populated `trace_id`/`span_id`, then pivot on those IDs in Dash0.
 
-**Two failure-injection modes keep retry, error logging, and OTel exception paths warm:**
+The producer cycles four named scenarios that shape traffic, latency, and error rates:
 
-- `INJECT_FAILURES=true` on the producer marks every 25th record with `meta.simulate_processing_failure` (client-driven, deterministic).
-- `LOG_PROCESSING_FAILURE_RATE_PCT=5` on the app throws on ~5% of records after the simulated delay (server-driven, probabilistic).
+| Scenario         | What it demonstrates                                                                            |
+| ---------------- | ----------------------------------------------------------------------------------------------- |
+| `baseline`       | Default mix across five services with ~78% info / 14% debug / 6% warn / 2% error.               |
+| `checkout-spike` | `checkout-api` volume ×5 with elevated latency — exercises queue depth and the `503` shed path. |
+| `payment-outage` | `payment-service` error rate jumps to ~60% with `payment.outcome=declined` — retry-burst story. |
+| `db-degradation` | `inventory-service` latency ×5 — shows up as a long tail in trace-duration histograms.          |
 
-They surface as distinct exception messages (`Simulated log processing failure` vs `Injected artificial processing failure`) so you can filter by failure type in Dash0.
+What to look for in Dash0:
+
+- **Service map.** `smoke-producer` feeds `log-ingestion-service`, which fans out into `checkout-api`, `payment-service`, `inventory-service`, `auth-service`, and `notification-service`. The five downstream services are simulated upstream callers reconstructed by the collector from the `log.service` attribute (`otelcol.yaml` `transform/rename-log-service`).
+- **Distributed traces.** A `producer.send_batch` root span (`service.name=smoke-producer`) parents one or more `log.process` spans on the ingestion service. Pivot from any record's `trace_id`/`span_id` to see the full path.
+- **Worker chaos signals.** The chaos decorator (enabled in compose by default, off otherwise) records `chaos.injected_latency_ms` and `chaos.injected_failure_kind` on each `log.process` span. Filter by `chaos.injected_failure_kind = permanent` to spot non-retryable failures, or by `chaos.injected_latency_ms > 2000` for the rare slow outliers that drive the queue-full path.
+- **Per-service queries.**
+  - `service.name = payment-service AND severity = ERROR` spikes only during the `payment-outage` window.
+  - `service.name = inventory-service AND db.duration_ms > 200` lights up during `db-degradation`.
+  - `service.name = checkout-api AND http.status_code = 503` correlates with `chaos.injected_latency_ms > 2000`.
+- **Retry semantics.** `worker.failure_kind = transient` spans have `worker.retry_count > 0` paired children; `worker.failure_kind = permanent` ones do not retry. The `log_processing_failed` Pino line carries the final `attempts` count.
 
 ## Configuration
 
@@ -214,6 +237,22 @@ All env vars are parsed once at startup by a Zod schema in `src/config.ts`. Inva
 | `LOG_LEVEL`                           | `info`                  | Pino log level (`trace` … `fatal`).                                                                                                                            |
 
 `OTEL_EXPORTER_OTLP_PROTOCOL` is read directly by the OpenTelemetry Node SDK (set to `http/protobuf` in `docker-compose.yml`); the service does not parse it.
+
+### Chaos injection
+
+The `ChaosLogProcessor` decorator wraps `StdoutLogProcessor` when `LOG_CHAOS_ENABLED=true` and injects latency, transient failures (retried), permanent failures (not retried), and rare slow outliers. The decorator is off by default in local dev and on by default in `docker-compose.yml`.
+
+| Name                               | Default   | Description                                                                                         |
+| ---------------------------------- | --------- | --------------------------------------------------------------------------------------------------- |
+| `LOG_CHAOS_ENABLED`                | `false`   | Wraps `StdoutLogProcessor` with the chaos decorator at startup.                                     |
+| `LOG_CHAOS_LATENCY_MEDIAN_MS`      | `20`      | Median of the lognormal latency distribution.                                                       |
+| `LOG_CHAOS_LATENCY_P99_MS`         | `500`     | p99 of the lognormal latency distribution. Must be `>=` median.                                     |
+| `LOG_CHAOS_OUTLIER_RATE`           | `0.005`   | Probability of replacing the lognormal sample with a uniform outlier (drives queue-full scenarios). |
+| `LOG_CHAOS_OUTLIER_MIN_MS`         | `2000`    | Lower bound of the outlier range.                                                                   |
+| `LOG_CHAOS_OUTLIER_MAX_MS`         | `5000`    | Upper bound of the outlier range. Must be `>=` min.                                                 |
+| `LOG_CHAOS_TRANSIENT_FAILURE_RATE` | `0.02`    | Probability of throwing `TransientProcessingError` (worker retries).                                |
+| `LOG_CHAOS_PERMANENT_FAILURE_RATE` | `0.002`   | Probability of throwing a non-retryable error. Combined with transient must be `<= 1`.              |
+| `LOG_CHAOS_SEED`                   | _(unset)_ | Optional integer seed for the chaos RNG. When unset, uses `Math.random` (non-reproducible).         |
 
 ## Endpoints
 
@@ -244,7 +283,9 @@ readinessProbe:
 
 - **In-memory bounded queue, behind a narrow interface.** `LogQueue` is replaceable with Kafka / Redis Streams / SQS without touching routes or worker.
 - **Honest backpressure.** Rate limiter returns `429`, queue overflow returns `503 queue_full`, both with `Retry-After`, so clients back off cleanly instead of guessing.
-- **Retry semantics are explicit.** `LOG_WORKER_MAX_RETRIES=3` means 1 initial + 3 retries = 4 attempts. Backoff is `base × 2^retryCount`.
+- **Retry semantics are explicit.** `LOG_WORKER_MAX_RETRIES=3` means 1 initial + 3 retries = 4 attempts. Backoff is `base × 2^retryCount`. Only `TransientProcessingError` triggers retries; any other thrown error fails on the first attempt and is recorded on the span as `worker.failure_kind=permanent`.
+- **Pluggable processor.** `LogWorker` depends on the `LogProcessor` interface, not on a concrete implementation. The chaos decorator (`ChaosLogProcessor`) wraps `StdoutLogProcessor` in `src/app.ts` when `LOG_CHAOS_ENABLED=true`. The chaos _policy_ is a pure module (`src/logs/chaosPolicy.ts`) with a seedable RNG so the decision logic is deterministic in tests.
+- **Multi-service identity in Dash0.** The processor promotes a fixed list of OTel semantic keys (`http.method`, `user.id`, `payment.amount`, …) from `meta` to top-level Pino fields so `instrumentation-pino` exposes them as first-class log record attributes. The Collector then pivots the per-record `log.service` attribute to `resource.service.name` (`otelcol.yaml` `groupbyattrs/log-service` + `transform/rename-log-service`), so each simulated upstream service shows up as its own Dash0 service.
 - **Pluggable auth and rate limit.** `ApiKeyStore` and `RateLimiter` are interfaces; in-memory implementations cover today's needs, persistent / distributed variants drop in behind the same shape.
 - **OTel + Pino correlation, not just trace export.** `instrumentation-pino` injects `trace_id`/`span_id` into STDOUT JSON _and_ multistreams to the OTel Logs SDK so OTLP log records carry proto-level `traceId`/`spanId`. SDK starts at module load so the require-time patch is in place before `pino` is first required.
 - **Drain on shutdown.** SIGTERM closes the HTTP server, runs `worker.drain(timeoutMs)` (event-driven race against a timer), then shuts down the OTel SDK. In-flight batches survive rolling deploys.

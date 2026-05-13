@@ -3,6 +3,8 @@ import { context, SpanKind, SpanStatusCode, trace, type Tracer } from '@opentele
 import { logger } from '../observability/logger';
 import { LogQueue } from './logQueue';
 import { sleep, type LogProcessor } from './logProcessor';
+import { TransientProcessingError } from './transientProcessingError';
+import { classifyFailureKind, type FailureKind } from './failureKind';
 import { validateWorkerConfig, type LogWorkerConfig } from './logWorkerConfig';
 import { getServiceName } from './serviceName';
 import type { ProcessingResult, QueuedLogEntry } from './types';
@@ -145,7 +147,8 @@ export class LogWorker {
         return { ok: true, attempts: retryCount + 1 };
       } catch (error) {
         const lastError = normalizeError(error);
-        const isFinalAttempt = retryCount >= this.config.maxRetries;
+        const isFinalAttempt =
+          retryCount >= this.config.maxRetries || !(lastError instanceof TransientProcessingError);
 
         logger.warn(
           {
@@ -208,8 +211,7 @@ export class LogWorker {
           try {
             await this.processor.process(entry.record);
 
-            const processingMs = Date.now() - startedAt;
-            span.setAttribute('worker.processing_ms', processingMs);
+            span.setAttribute('worker.failure_kind', 'none' satisfies FailureKind);
             span.setStatus({ code: SpanStatusCode.OK });
 
             logger.info(
@@ -218,17 +220,18 @@ export class LogWorker {
                 entryId: entry.id,
                 clientId: entry.clientId,
                 retryCount,
-                processingMs,
+                processingMs: Date.now() - startedAt,
               },
               'log processing succeeded',
             );
           } catch (error) {
             const normalized = normalizeError(error);
+            span.setAttribute('worker.failure_kind', classifyFailureKind(normalized));
             span.recordException(normalized);
             span.setStatus({ code: SpanStatusCode.ERROR, message: normalized.message });
-            span.setAttribute('worker.processing_ms', Date.now() - startedAt);
             throw normalized;
           } finally {
+            span.setAttribute('worker.processing_ms', Date.now() - startedAt);
             span.end();
           }
         },

@@ -9,13 +9,15 @@ import { InMemoryApiKeyStore } from './auth/apiKeyStore';
 import { createAuthMiddleware } from './auth/authMiddleware';
 import { config, type Config } from './config';
 import { createHealthRoutes } from './http/healthRoutes';
-import { serviceInfo } from './serviceInfo';
+import { ChaosLogProcessor } from './logs/chaosLogProcessor';
+import { createSeededRng } from './logs/chaosPolicy';
 import { LogQueue } from './logs/logQueue';
-import { StdoutLogProcessor } from './logs/logProcessor';
+import { type LogProcessor, StdoutLogProcessor } from './logs/logProcessor';
 import { createLogRoutes } from './logs/logRoutes';
 import { LogWorker } from './logs/logWorker';
 import { FixedWindowRateLimiter } from './rate-limit/fixedWindowRateLimiter';
 import { createRateLimitMiddleware } from './rate-limit/rateLimitMiddleware';
+import { serviceInfo } from './serviceInfo';
 
 export interface CreatedApp {
   app: Application;
@@ -54,11 +56,15 @@ export function createApp(overrideConfig?: Config): CreatedApp {
   const apiKeyStore = new InMemoryApiKeyStore(cfg.auth.apiKeys);
   const rateLimiter = new FixedWindowRateLimiter(cfg.rateLimit);
   const queue = new LogQueue(cfg.queue.maxSize);
-  const processor = new StdoutLogProcessor({
+  let processor: LogProcessor = new StdoutLogProcessor({
     baseMs: cfg.worker.processingDelayMs,
     jitterMs: cfg.worker.processingDelayJitterMs,
     failureRatePercent: cfg.worker.processingFailureRatePct,
   });
+  if (cfg.chaos.enabled) {
+    const rng = cfg.chaos.seed !== undefined ? createSeededRng(cfg.chaos.seed) : Math.random;
+    processor = new ChaosLogProcessor(processor, cfg.chaos.policy, rng);
+  }
   const worker = new LogWorker(queue, processor, cfg.worker);
   worker.start();
 

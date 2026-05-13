@@ -1,4 +1,6 @@
 import { logger } from '../observability/logger';
+import { promoteSemanticAttributes } from './semanticAttributes';
+import { TransientProcessingError } from './transientProcessingError';
 import type { LogRecord } from './types';
 
 export interface LogProcessor {
@@ -30,21 +32,24 @@ export class StdoutLogProcessor implements LogProcessor {
     if (delay > 0) await sleep(delay);
 
     if (record.meta.simulate_processing_failure === true) {
-      throw new Error('Simulated log processing failure');
+      throw new TransientProcessingError('Simulated log processing failure');
     }
 
     if (this.failureRatePercent > 0 && this.random() * 100 < this.failureRatePercent) {
       throw new Error('Injected artificial processing failure');
     }
 
+    const { promoted, rest } = promoteSemanticAttributes(record.meta);
+
     logger.info(
       {
+        ...promoted,
         type: 'processed_log',
         processedAt: new Date().toISOString(),
         originalTimestamp: record.timestamp,
         level: record.level,
         message: record.message,
-        meta: record.meta,
+        meta: rest,
       },
       'log processed',
     );
