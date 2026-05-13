@@ -5,13 +5,76 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D24-brightgreen.svg)](https://nodejs.org)
 [![pnpm](https://img.shields.io/badge/pnpm-11-orange.svg)](https://pnpm.io)
 
-HTTP log ingestion service with async processing and OpenTelemetry traces, metrics, and logs.
+HTTP log ingestion service: authenticated bearer ingest, per-client rate limiting, async processing through a bounded in-memory queue and worker pool, and OpenTelemetry traces, metrics, and logs shipped over OTLP — to an OTel Collector and on to Dash0 in the documented setup.
 
-## What this service does
+## Contents
 
-`structured-log-service` accepts batches of structured log records over HTTP, validates them, and processes them asynchronously through an in-memory bounded queue and a worker pool. Requests are authenticated with bearer API keys and rate-limited per client. The worker writes each record as a single JSON line to STDOUT and, when `OTEL_EXPORTER_OTLP_ENDPOINT` is configured, `@opentelemetry/instrumentation-pino` also feeds the same records into the OpenTelemetry Logs SDK so they ship to the collector over OTLP with the proto-level `traceId`/`spanId` populated from the active span. The Node OpenTelemetry SDK is wired with `@opentelemetry/auto-instrumentations-node` and a periodic OTLP metric reader, so the process emits traces, metrics, and logs over OTLP to whatever collector it is pointed at. Kubernetes-style `/livez` and `/readyz` probes report liveness and queue-depth-aware readiness.
+- [Capabilities](#capabilities)
+- [Architecture](#architecture)
+- [Quick start](#quick-start)
+- [Code tour](#code-tour)
+- [Observability with Dash0](#observability-with-dash0)
+- [Example request](#example-request)
+- [Running tests](#running-tests)
+- [Docker Compose smoke test](#docker-compose-smoke-test)
+- [Configuration](#configuration)
+- [Endpoints](#endpoints)
+- [Design decisions](#design-decisions)
+- [Production follow-ups](#production-follow-ups)
+
+## Capabilities
+
+Each capability with a pointer into the codebase.
+
+| Area          | Capability                                                                  | Implementation                                                                                    |
+| ------------- | --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Auth          | Bearer-token API key                                                        | `src/auth/authMiddleware.ts`                                                                      |
+| Auth          | In-memory key store behind a swappable interface                            | `src/auth/apiKeyStore.ts` (`ApiKeyStore` interface + in-memory impl)                              |
+| Auth          | Per-key rate limit (default 10 req/s)                                       | `src/rate-limit/fixedWindowRateLimiter.ts`, `rateLimitMiddleware.ts`                              |
+| Ingestion     | `POST /logs/json` accepts JSON array                                        | `src/logs/logRoutes.ts`                                                                           |
+| Ingestion     | Payload validation                                                          | `src/logs/logRecordSchema.ts` (Zod)                                                               |
+| Ingestion     | Push to internal queue                                                      | `src/logs/logQueue.ts` (bounded; 503 + `Retry-After` on overflow)                                 |
+| Processing    | Background worker, log to STDOUT                                            | `src/logs/logWorker.ts`, `src/logs/logProcessor.ts`                                               |
+| Processing    | Simulated per-entry delay                                                   | `StdoutLogProcessor.process` (base + uniform jitter)                                              |
+| Processing    | Configurable concurrency (default 5)                                        | `LOG_WORKER_CONCURRENCY`, enforced in `LogWorker.tick`                                            |
+| Processing    | Retry up to 3 times with exponential backoff                                | `LogWorker.processWithRetries` (1 initial + 3 retries)                                            |
+| Observability | `@opentelemetry/sdk-node`                                                   | `src/telemetry/tracing.ts` (started at module load)                                               |
+| Observability | Child span per entry                                                        | `LogWorker.processAttempt` → `tracer.startActiveSpan('log.process', …)`                           |
+| Observability | Attributes: `log.level`, `log.service`, `queue.depth`, `worker.retry_count` | `LogWorker.processAttempt`                                                                        |
+| Observability | `recordException` + `setStatus(ERROR)` on failure                           | `LogWorker.processAttempt` catch block                                                            |
+| Observability | Dash0 backend                                                               | `otelcol.yaml` (`otlp/dash0` exporter); see [Observability with Dash0](#observability-with-dash0) |
+
+## Architecture
+
+```
+  client
+     │ POST /logs/json  (Bearer auth)
+     ▼
+  auth ─▶ rate limit ─▶ /logs/json route
+                                │ enqueue
+                                ▼
+                        bounded LogQueue
+                                │ dequeue
+                                ▼
+                         LogWorker pool
+                 (concurrency=5, retry up to 3)
+                                │
+                 ┌──────────────┴──────────────┐
+                 ▼                             ▼
+              STDOUT             OTLP traces + logs + metrics
+                                               │
+                                               ▼
+                                        OTel Collector
+                                               │
+                                               ▼
+                                             Dash0
+```
+
+Each accepted request returns 202 immediately; work is drained asynchronously by the worker pool. `/livez` and `/readyz` expose Kubernetes-style probes for liveness (process up) and readiness (worker running, queue below the high-water mark).
 
 ## Quick start
+
+Requires [mise](https://mise.jdx.dev/) for the pinned Node + pnpm toolchain. On macOS: `brew install mise` (other platforms: see [getting started](https://mise.jdx.dev/getting-started.html)).
 
 ```sh
 mise trust
@@ -20,17 +83,49 @@ mise run install
 mise run dev
 ```
 
-The service listens on port `3003` by default.
-
-Health check:
+The service listens on port `3003` by default. Health check:
 
 ```sh
 curl http://localhost:3003/
+# {"name":"structured-log-service","version":"0.1.0"}
 ```
 
-```json
-{ "name": "structured-log-service", "status": "ok" }
-```
+## Code tour
+
+A short orientation for new readers — the highest-leverage files to start with:
+
+1. `src/logs/logRoutes.ts` — the HTTP boundary: validation, queue enqueue, parent-context capture for the trace handoff.
+2. `src/logs/logWorker.ts` — concurrency control, retry-with-backoff loop, and the `log.process` span with its OTel attributes.
+3. `src/telemetry/tracing.ts` — `NodeSDK` wiring, why it must load before pino/express, and how the OTLP exporters are configured.
+4. `src/auth/apiKeyStore.ts` and `src/rate-limit/rateLimiter.ts` — narrow interfaces in front of in-memory implementations, ready for a persistent / distributed swap.
+
+## Observability with Dash0
+
+The worker creates one span per log entry (`log.process`, `SpanKind.INTERNAL`) as a child of the HTTP request span. The parent context is captured at ingest in `logRoutes.ts` and re-entered in the worker with `context.with(entry.parentContext, …)`, so the trace stays intact across the queue hop.
+
+**Span attributes set on every entry:**
+
+| Attribute              | Source                                       |
+| ---------------------- | -------------------------------------------- |
+| `log.level`            | record `level`                               |
+| `log.service`          | `meta.service` (via `getServiceName(entry)`) |
+| `queue.depth`          | `LogQueue.depth()` at dispatch time          |
+| `worker.retry_count`   | current retry index (0..maxRetries)          |
+| `log.message.length`   | record `message.length`                      |
+| `log.entry_id`         | UUID assigned at ingest                      |
+| `client.id`            | authenticated client id                      |
+| `worker.processing_ms` | measured per attempt                         |
+
+On failure, the catch block calls `span.recordException(error)` and `span.setStatus({ code: SpanStatusCode.ERROR, message })` — visible in Dash0 as red spans with the exception payload attached.
+
+**Logs are correlated automatically.** `@opentelemetry/instrumentation-pino` injects `trace_id`/`span_id` into every JSON log line on STDOUT and multistreams the same record to the OTel Logs SDK, so the OTLP log export carries the proto-level `traceId`/`spanId` set from the active span. Pivot from a `processed_log` line to its worker span in Dash0 by `trace_id`.
+
+**What to look for in Dash0:**
+
+- Filter spans by `status.code = ERROR` to see retry storms — the same `log.entry_id` will appear up to 4 times (1 initial + 3 retries) with increasing `worker.retry_count`.
+- Group by `log.service` to attribute work to upstream emitters (`meta.service`).
+- Sort by `worker.processing_ms` to spot slow records.
+- The smoke setup injects two distinct error messages so you can split server-side vs client-flagged failures by `exception.message`.
 
 ## Example request
 
@@ -48,8 +143,6 @@ curl -i -X POST http://localhost:3003/logs/json \
   ]'
 ```
 
-Expected response:
-
 ```http
 HTTP/1.1 202 Accepted
 Content-Type: application/json
@@ -58,6 +151,8 @@ Content-Type: application/json
 ```
 
 ## Running tests
+
+Mutation score is gated at ≥ 70%.
 
 | Command                     | What it runs                                         |
 | --------------------------- | ---------------------------------------------------- |
@@ -70,9 +165,9 @@ Content-Type: application/json
 
 ## Docker Compose smoke test
 
-The smoke test exercises the full pipeline end-to-end: HTTP → app → queue → worker → (STDOUT JSON for local visibility **and** Pino → `instrumentation-pino` → OpenTelemetry Logs SDK → OTLP) → OpenTelemetry Collector → **[Dash0](https://www.dash0.com/)**. The OTel SDK in the app also ships traces and process/HTTP metrics over OTLP to the same collector. Dash0 is the observability backend used for dashboards, trace inspection, and log search; the Collector forwards traces, logs, and metrics to it via OTLP. The Collector's `debug` exporter still prints locally even when Dash0 credentials are absent, so the pipeline is usable for local-only checks too.
+Exercises the full pipeline end-to-end: `HTTP → app → queue → worker → (STDOUT JSON + Pino → instrumentation-pino → OpenTelemetry Logs SDK → OTLP) → OpenTelemetry Collector → Dash0`. The Collector's `debug` exporter still prints locally even when Dash0 credentials are absent, so the pipeline is usable for local-only checks.
 
-You will need a Dash0 account to see the data downstream — fill the OTLP endpoint and ingest auth token in `.env`:
+You will need a Dash0 account to see the data downstream:
 
 ```sh
 cp .env.example .env
@@ -83,9 +178,14 @@ mise run compose:smoke   # app + otelcol + synthetic producer (loadtest profile)
 mise run compose:down    # tear down, including loadtest containers
 ```
 
-Without the `loadtest` profile you drive traffic with curl. With the profile, `scripts/send-logs.mjs` posts a batch every 500 ms. Watch the Collector logs for the `debug` exporter output and the app logs for `processed_log` lines with populated `trace_id`/`span_id`, then pivot on those IDs in Dash0.
+Without the `loadtest` profile you drive traffic with curl. With it, `scripts/send-logs.mjs` posts a batch every 500 ms. Watch the Collector logs for `debug` exporter output and the app logs for `processed_log` lines with populated `trace_id`/`span_id`, then pivot on those IDs in Dash0.
 
-The smoke setup exercises two complementary failure-injection modes so retry, error logging, and OTel exception paths stay warm: the producer's `INJECT_FAILURES=true` marks every 25th record with `meta.simulate_processing_failure` (client-driven, deterministic) and the app's `LOG_PROCESSING_FAILURE_RATE_PCT=5` randomly throws on ~5% of records after the simulated delay (server-driven, probabilistic). The two surface as distinct error messages — `Simulated log processing failure` and `Injected artificial processing failure` — so you can filter spans and logs by failure type.
+**Two failure-injection modes keep retry, error logging, and OTel exception paths warm:**
+
+- `INJECT_FAILURES=true` on the producer marks every 25th record with `meta.simulate_processing_failure` (client-driven, deterministic).
+- `LOG_PROCESSING_FAILURE_RATE_PCT=5` on the app throws on ~5% of records after the simulated delay (server-driven, probabilistic).
+
+They surface as distinct exception messages (`Simulated log processing failure` vs `Injected artificial processing failure`) so you can filter by failure type in Dash0.
 
 ## Configuration
 
@@ -107,7 +207,7 @@ All env vars are parsed once at startup by a Zod schema in `src/config.ts`. Inva
 | `LOG_PROCESSING_DELAY_JITTER_MS`      | `0`                     | Additional uniform random jitter added on top of `LOG_PROCESSING_DELAY_MS` per entry, in ms. Effective delay is uniform in `[base, base + jitter]`.            |
 | `LOG_PROCESSING_FAILURE_RATE_PCT`     | `0`                     | Probability (integer 0–100) that an entry's processing throws after the simulated delay. `0` disables. Useful for exercising retry/error paths in smoke tests. |
 | `LOG_WORKER_POLL_INTERVAL_MS`         | `100`                   | Worker tick interval when there is no notify signal.                                                                                                           |
-| `LOG_WORKER_RETRY_BACKOFF_BASE_MS`    | `50`                    | Base backoff (multiplied by attempt count) before retrying a failed record.                                                                                    |
+| `LOG_WORKER_RETRY_BACKOFF_BASE_MS`    | `50`                    | Base backoff before retrying a failed record. Doubles each retry: `base × 2^retryCount`.                                                                       |
 | `LOG_WORKER_DRAIN_TIMEOUT_MS`         | `5000`                  | Maximum time the worker waits to drain the queue during shutdown.                                                                                              |
 | `OTEL_SERVICE_NAME`                   | `log-ingestion-service` | `service.name` resource attribute reported to the OTel pipeline.                                                                                               |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`         | _(unset)_               | OTLP endpoint for the trace exporter. Omitting it disables the network exporter.                                                                               |
@@ -142,24 +242,28 @@ readinessProbe:
 
 ## Design decisions
 
-- **In-memory bounded queue.** Scope-appropriate for this assignment, but isolated behind a narrow `LogQueue` interface so the implementation can be swapped for Kafka, Redis Streams, or SQS without touching the routes or worker.
-- **Backpressure with `Retry-After`.** Both the rate limiter (`429`) and the queue (`503 queue_full`) set honest retry signals so clients can back off cleanly rather than guess.
-- **Retry semantics.** `LOG_WORKER_MAX_RETRIES` counts retries _after_ the initial attempt: `3` means 1 initial + 3 retries = 4 attempts total. Backoff is `attempt × LOG_WORKER_RETRY_BACKOFF_BASE_MS`.
-- **Pluggable rate limit.** A `RateLimiter` interface fronts the in-memory fixed-window implementation. A sliding-window variant (to close the boundary-burst gap) can drop in behind the same interface; it is intentionally deferred for this assignment.
-- **OTel + Pino correlation.** The auto-instrumentation bundle wires `@opentelemetry/instrumentation-pino`, which does two things on every active-span log call: it injects `trace_id`/`span_id` into the JSON line on STDOUT (log correlation), and it multistreams the same record to the OpenTelemetry Logs SDK so the OTLP exporter ships it with the proto-level `traceId`/`spanId` set from the active context (log sending). The SDK is started at module load in `src/telemetry/tracing.ts` so the require-time patch is in place before `pino` is first required. Worker `log.process` spans expose retry count, attempt outcome, and client id as attributes — the pivot points for Dash0 dashboards and trace lookups.
-- **Drain-on-shutdown.** On SIGTERM the process closes the HTTP server, then runs `worker.drain(timeoutMs)` (event-driven race against a timer), then shuts down the OTel SDK, then exits. This keeps in-flight batches from being dropped during rolling deploys.
-- **`/livez` vs `/readyz`.** Liveness is restart-only: it returns `200` as long as the process is running, so Kubernetes only restarts on a hard crash. Readiness is load-shed-only: it returns `503` when the worker is stopped or the queue is above the high-water mark, so the pod is pulled out of the Service backend without being restarted.
+- **In-memory bounded queue, behind a narrow interface.** `LogQueue` is replaceable with Kafka / Redis Streams / SQS without touching routes or worker.
+- **Honest backpressure.** Rate limiter returns `429`, queue overflow returns `503 queue_full`, both with `Retry-After`, so clients back off cleanly instead of guessing.
+- **Retry semantics are explicit.** `LOG_WORKER_MAX_RETRIES=3` means 1 initial + 3 retries = 4 attempts. Backoff is `base × 2^retryCount`.
+- **Pluggable auth and rate limit.** `ApiKeyStore` and `RateLimiter` are interfaces; in-memory implementations cover today's needs, persistent / distributed variants drop in behind the same shape.
+- **OTel + Pino correlation, not just trace export.** `instrumentation-pino` injects `trace_id`/`span_id` into STDOUT JSON _and_ multistreams to the OTel Logs SDK so OTLP log records carry proto-level `traceId`/`spanId`. SDK starts at module load so the require-time patch is in place before `pino` is first required.
+- **Drain on shutdown.** SIGTERM closes the HTTP server, runs `worker.drain(timeoutMs)` (event-driven race against a timer), then shuts down the OTel SDK. In-flight batches survive rolling deploys.
+- **`/livez` vs `/readyz` are different concerns.** Liveness is restart-only (process up); readiness is load-shed-only (worker running, queue below high-water mark). Kubernetes pulls a saturated pod from the Service backend without restarting it.
 
 ## Production follow-ups
 
-- Durable queue and dead-letter queue (Kafka / Redis Streams / SQS) instead of in-memory.
-- Persistent, hashed API key store (Postgres + bcrypt/argon2) instead of comma-separated env keys.
-- Distributed Redis-backed sliding-window rate limiter.
-- Idempotency keys / batch-level deduplication.
-- Multi-instance retry backoff with jitter to avoid thundering-herd retries.
-- `InMemorySpanExporter`-based integration tests asserting span attributes and parent linkage.
-- Per-tenant fairness via round-robin sub-queues so one noisy client cannot starve others.
-- Per-IP pre-auth rate limit to dampen credential-stuffing against `/logs/json`.
+Known gaps for production scale. Each is unblocked by the abstractions already in place.
+
+| Follow-up                                               | Notes                                                                               |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Durable queue + DLQ (Kafka / Redis Streams / SQS)       | In-memory queue is sufficient at current scale; `LogQueue` interface fits the swap. |
+| Hashed, persistent API-key store (Postgres + argon2)    | `ApiKeyStore` is async — swap is mechanical.                                        |
+| Distributed sliding-window rate limiter (Redis)         | Single-instance fixed window is sufficient at current scale; `RateLimiter` fits.    |
+| Idempotency keys / batch-level deduplication            | Needs a request-id contract with the producer.                                      |
+| Multi-instance retry backoff with jitter                | Single-process retries don't need anti-thundering-herd jitter.                      |
+| `InMemorySpanExporter` integration tests for span shape | Span attributes covered indirectly via worker unit tests; would harden CI.          |
+| Per-tenant fairness via round-robin sub-queues          | A single noisy client can currently starve others under saturation.                 |
+| Per-IP pre-auth rate limit                              | Today the rate limit is per authenticated client; pre-auth ingress is open.         |
 
 ## License
 
