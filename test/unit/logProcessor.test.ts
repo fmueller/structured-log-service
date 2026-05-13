@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { sleep, StdoutLogProcessor } from '../../src/logs/logProcessor';
+import { TransientProcessingError } from '../../src/logs/transientProcessingError';
 import type { LogRecord } from '../../src/logs/types';
 import { logger } from '../../src/observability/logger';
 
@@ -44,6 +45,7 @@ describe('StdoutLogProcessor', () => {
     const record = makeRecord({ meta: { simulate_processing_failure: true } });
 
     await expect(processor.process(record)).rejects.toThrow('Simulated log processing failure');
+    await expect(processor.process(record)).rejects.toBeInstanceOf(TransientProcessingError);
   });
 
   it('does not call logger.info when the record simulates a processing failure', async () => {

@@ -1,4 +1,5 @@
 import { logger } from '../observability/logger';
+import { TransientProcessingError } from './transientProcessingError';
 import type { LogRecord } from './types';
 
 export interface LogProcessor {
@@ -30,7 +31,7 @@ export class StdoutLogProcessor implements LogProcessor {
     if (delay > 0) await sleep(delay);
 
     if (record.meta.simulate_processing_failure === true) {
-      throw new Error('Simulated log processing failure');
+      throw new TransientProcessingError('Simulated log processing failure');
     }
 
     if (this.failureRatePercent > 0 && this.random() * 100 < this.failureRatePercent) {

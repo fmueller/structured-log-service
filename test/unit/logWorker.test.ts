@@ -8,7 +8,7 @@ import { LogWorker } from '../../src/logs/logWorker';
 import type { LogWorkerConfig } from '../../src/logs/logWorkerConfig';
 import type { LogRecord, QueuedLogEntry } from '../../src/logs/types';
 import { logger } from '../../src/observability/logger';
-import { FakeProcessor } from '../helpers/fakes';
+import { FakeProcessor, makePermanentFailProcessor } from '../helpers/fakes';
 import { waitUntil } from '../helpers/waitUntil';
 
 function makeRecord(overrides: Partial<LogRecord> = {}): LogRecord {
@@ -124,6 +124,21 @@ describe('LogWorker', () => {
     await waitUntil(() => fake.attempts === 4);
     expect(fake.processed).toHaveLength(0);
     expect(fake.attempts).toBe(4);
+  });
+
+  it('permanent error (non-TransientProcessingError) fails on first attempt without retrying', async () => {
+    const queue = new LogQueue(10);
+    const permanent = makePermanentFailProcessor();
+    worker = new LogWorker(queue, permanent, baseConfig);
+
+    worker.start();
+    queue.enqueueMany([makeEntry()]);
+    worker.notify();
+
+    await waitUntil(() => permanent.attempts === 1);
+    // Yield so the final logger.error call completes.
+    await new Promise((r) => setTimeout(r, 20));
+    expect(permanent.attempts).toBe(1);
   });
 
   it('continues processing other entries after one fails', async () => {
@@ -455,5 +470,29 @@ describe('LogWorker observability', () => {
     // Three failures -> sleeps of 20*2^0 + 20*2^1 + 20*2^2 = 20+40+80 = 140ms.
     expect(elapsed).toBeGreaterThanOrEqual(140);
     expect(fake.attempts).toBe(4);
+  });
+
+  it('emits log_processing_failed with attempts: 1 for a permanent (non-transient) error', async () => {
+    const queue = new LogQueue(10);
+    const permanent = makePermanentFailProcessor();
+    worker = new LogWorker(queue, permanent, baseConfig);
+
+    const entry = makeEntry();
+    worker.start();
+    queue.enqueueMany([entry]);
+    worker.notify();
+
+    await waitUntil(() => permanent.attempts === 1);
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(error).toHaveBeenCalledTimes(1);
+    const [payload, msg] = error.mock.calls[0] as [Record<string, unknown>, string];
+    expect(msg).toBe('log processing failed');
+    expect(payload).toMatchObject({
+      type: 'log_processing_failed',
+      entryId: entry.id,
+      clientId: entry.clientId,
+      attempts: 1,
+    });
   });
 });

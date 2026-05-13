@@ -1,5 +1,19 @@
 import type { LogProcessor } from '../../src/logs/logProcessor';
+import { TransientProcessingError } from '../../src/logs/transientProcessingError';
 import type { LogRecord } from '../../src/logs/types';
+
+export function makePermanentFailProcessor(): LogProcessor & { readonly attempts: number } {
+  const state = { attempts: 0 };
+  return {
+    get attempts() {
+      return state.attempts;
+    },
+    async process() {
+      state.attempts += 1;
+      throw new Error('permanent failure');
+    },
+  };
+}
 
 export type FakeProcessorOptions = {
   failTimes?: number;
@@ -28,11 +42,11 @@ export class FakeProcessor implements LogProcessor {
       }
 
       if (this.attempts <= (this.options.failTimes ?? 0)) {
-        throw new Error('Fake processing failure');
+        throw new TransientProcessingError('Fake processing failure');
       }
 
       if (record.meta.simulate_processing_failure === true) {
-        throw new Error('Simulated processing failure');
+        throw new TransientProcessingError('Simulated processing failure');
       }
 
       this.processed.push(record);
