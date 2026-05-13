@@ -69,3 +69,11 @@ run = "docker compose --profile loadtest down --remove-orphans"
 [tasks.dev]
 description = "Run dev server"
 run = "pnpm dev"
+
+[tasks."compose:smoke:once"]
+description = "Run synthetic producer once (N batches). Override via BATCH_LIMIT=N env or set default below."
+run = "BATCH_LIMIT=${BATCH_LIMIT:-50} docker compose --profile loadtest up --build --abort-on-container-exit --exit-code-from log-producer"
+
+[tasks."compose:smoke:scenario"]
+description = "Run synthetic producer locked to a scenario. Override via SCENARIO=name env (default: baseline)."
+run = "SCENARIO=${SCENARIO:-baseline} docker compose --profile loadtest up --build"

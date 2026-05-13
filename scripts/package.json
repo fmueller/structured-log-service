@@ -1,0 +1,13 @@
+{
+  "name": "smoke-producer",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.217.0",
+    "@opentelemetry/resources": "^2.7.1",
+    "@opentelemetry/sdk-node": "^0.217.0",
+    "@opentelemetry/semantic-conventions": "^1.40.0"
+  }
+}

@@ -2,11 +2,13 @@
 // Synthetic HTTP log producer for the Docker Compose smoke test.
 // Plain Node ESM (no TypeScript, no Pino) — runs in a separate container.
 
-const INGESTION_URL = process.env.INGESTION_URL ?? 'http://localhost:3003/logs/json';
-const API_KEY = process.env.API_KEY ?? 'dev-api-key';
-const BATCH_SIZE = Number(process.env.BATCH_SIZE ?? '10');
-const INTERVAL_MS = Number(process.env.INTERVAL_MS ?? '500');
-const INJECT_FAILURES = process.env.INJECT_FAILURES === 'true';
+import { parseConfig } from './producer/config.mjs';
+import { createIdPool } from './producer/idPool.mjs';
+import { initTracing } from './producer/tracing.mjs';
+import { createHttpClient } from './producer/httpClient.mjs';
+import { createSummary } from './producer/summary.mjs';
+import { buildRecord } from './producer/payload.mjs';
+import { SCENARIO_NAMES, getScenarioState } from './producer/scenarios.mjs';
 
 const SERVICES = [
   'checkout-api',
@@ -15,82 +17,169 @@ const SERVICES = [
   'auth-service',
   'notification-service',
 ];
-const LEVELS = ['debug', 'info', 'warn', 'error'];
 
-let counter = 0;
+const SCENARIO_ACTIVE_MS = 90_000;
+const SCENARIO_BASELINE_MS = 60_000;
+const SUMMARY_INTERVAL_MS = 30_000;
 
-function buildRecord(index) {
-  const service = SERVICES[index % SERVICES.length];
-  const level = LEVELS[Math.floor(Math.random() * LEVELS.length)];
-  const meta = {
-    service,
-    request_id: `req-${String(index)}`,
-  };
-  if (INJECT_FAILURES && index % 25 === 0) {
-    meta.simulate_processing_failure = true;
-  }
-  return {
-    timestamp: new Date().toISOString(),
-    level,
-    message: `${service} event #${String(index)}`,
-    meta,
+// Simple LCG for reproducible randomness (seed from config).
+function makeLcg(seed) {
+  let s = seed >>> 0;
+  return function rng() {
+    s = (Math.imul(1664525, s) + 1013904223) >>> 0;
+    return s / 0x100000000;
   };
 }
 
-function buildBatch() {
-  const batch = [];
-  for (let i = 0; i < BATCH_SIZE; i++) {
-    batch.push(buildRecord(counter));
-    counter += 1;
-  }
-  return batch;
-}
-
-async function sendBatch() {
-  const batch = buildBatch();
-  try {
-    const response = await fetch(INGESTION_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(batch),
+function createInterruptibleSleep() {
+  let wake;
+  function sleep(ms) {
+    return new Promise((resolve) => {
+      const t = setTimeout(resolve, ms);
+      wake = () => {
+        clearTimeout(t);
+        resolve();
+      };
     });
-    const bodyText = await response.text();
-    console.log(
-      JSON.stringify({
-        sent: batch.length,
-        status: response.status,
-        body: bodyText.slice(0, 200),
-      }),
-    );
-  } catch (error) {
-    console.log(
-      JSON.stringify({
-        sent: batch.length,
-        error: error instanceof Error ? error.message : String(error),
-      }),
-    );
   }
+  function interrupt() {
+    wake?.();
+  }
+  return { sleep, interrupt };
 }
 
-console.log(
-  JSON.stringify({
-    msg: 'log-producer starting',
-    ingestionUrl: INGESTION_URL,
-    batchSize: BATCH_SIZE,
-    intervalMs: INTERVAL_MS,
-    injectFailures: INJECT_FAILURES,
-  }),
-);
+// Scenario cycling state
+function makeScenarioCycler(override) {
+  if (override) {
+    const fixed = getScenarioState(override, 0);
+    return { currentScenario: () => fixed };
+  }
+  let idx = 0;
+  let phaseStart = Date.now();
+  let inBaseline = true;
 
-setInterval(() => {
-  sendBatch().catch((error) => {
-    console.log(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : String(error),
-      }),
-    );
+  return {
+    currentScenario() {
+      const elapsed = Date.now() - phaseStart;
+      if (inBaseline && elapsed >= SCENARIO_BASELINE_MS) {
+        inBaseline = false;
+        phaseStart = Date.now();
+      } else if (!inBaseline && elapsed >= SCENARIO_ACTIVE_MS) {
+        inBaseline = true;
+        idx = (idx + 1) % SCENARIO_NAMES.length;
+        phaseStart = Date.now();
+      }
+      const name = inBaseline ? 'baseline' : SCENARIO_NAMES[idx];
+      return getScenarioState(name, Date.now() - phaseStart);
+    },
+  };
+}
+
+async function main() {
+  const config = parseConfig(process.argv.slice(2), process.env);
+
+  const { tracer, sdk } = initTracing(config.otlpEndpoint);
+  const idPool = createIdPool({ users: 200, orders: 500, carts: 300, skus: 100 });
+  const rng = makeLcg(config.seed);
+  const httpClient = createHttpClient(config, tracer);
+  const summary = createSummary();
+  const cycler = makeScenarioCycler(config.scenarioOverride);
+  const { sleep, interrupt } = createInterruptibleSleep();
+
+  console.log(
+    JSON.stringify({
+      msg: 'log-producer starting',
+      ingestionUrl: config.ingestionUrl,
+      batchSize: config.batchSize,
+      intervalMs: config.intervalMs,
+      mode: config.mode,
+      batchLimit: config.batchLimit,
+      scenarioOverride: config.scenarioOverride,
+      seed: config.seed,
+    }),
+  );
+
+  let stopped = false;
+  let inFlight = null;
+  let batchCount = 0;
+  let consecutiveFailures = 0;
+
+  const summaryTimer = setInterval(() => {
+    const scenario = cycler.currentScenario();
+    summary.tick(scenario.name, SUMMARY_INTERVAL_MS);
+  }, SUMMARY_INTERVAL_MS);
+
+  async function runLoop() {
+    let serviceIdx = 0;
+
+    while (!stopped) {
+      const scenario = cycler.currentScenario();
+      const effectiveInterval = Math.max(
+        10,
+        Math.round(config.intervalMs / scenario.volumeMultiplier),
+      );
+
+      // Build one record per service in this batch
+      const records = [];
+      for (let i = 0; i < config.batchSize; i++) {
+        const service = SERVICES[serviceIdx % SERVICES.length];
+        records.push(buildRecord(service, scenario, idPool, rng));
+        serviceIdx++;
+      }
+
+      inFlight = httpClient.sendBatch(records);
+      const result = await inFlight;
+      inFlight = null;
+
+      summary.record(result);
+      batchCount++;
+
+      console.log(
+        JSON.stringify({
+          sent: records.length,
+          status: result.status,
+          ok: result.ok,
+          scenario: scenario.name,
+          batch: batchCount,
+          ...(result.error ? { error: result.error } : {}),
+        }),
+      );
+
+      if (!result.ok) {
+        consecutiveFailures++;
+        if (config.mode === 'once' && consecutiveFailures >= 5) {
+          process.stderr.write('5 consecutive failures — aborting\n');
+          break;
+        }
+      } else {
+        consecutiveFailures = 0;
+      }
+
+      if (config.mode === 'once' && batchCount >= config.batchLimit) {
+        break;
+      }
+
+      await sleep(effectiveInterval);
+    }
+  }
+
+  process.on('SIGTERM', () => {
+    stopped = true;
+    interrupt();
   });
-}, INTERVAL_MS);
+
+  await runLoop();
+
+  clearInterval(summaryTimer);
+  summary.flush();
+
+  await sdk.shutdown().catch(() => {});
+
+  const exitCode = config.mode === 'once' && consecutiveFailures >= 5 ? 1 : 0;
+  process.exit(exitCode);
+}
+
+main().catch((err) => {
+  console.error(JSON.stringify({ msg: 'fatal', error: String(err) }));
+  process.exit(1);
+});
