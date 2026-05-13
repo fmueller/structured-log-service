@@ -12,6 +12,22 @@ processors:
     limit_mib: 256
     spike_limit_mib: 64
 
+  # Pivots the per-record log.service attribute into its enclosing resource so each
+  # simulated service ends up in its own ResourceLogs batch downstream.
+  groupbyattrs/log-service:
+    keys:
+      - log.service
+
+  # Renames the resource attribute log.service → service.name so Dash0 keys each
+  # batch by the simulated upstream service (checkout-api, payment-service, …)
+  # instead of the static log-ingestion-service set by the SDK.
+  transform/rename-log-service:
+    log_statements:
+      - context: resource
+        statements:
+          - set(attributes["service.name"], attributes["log.service"]) where attributes["log.service"] != nil
+          - delete_key(attributes, "log.service")
+
   batch:
     timeout: 2s
     send_batch_size: 512
@@ -33,7 +49,7 @@ service:
       exporters: [debug, otlp/dash0]
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
+      processors: [memory_limiter, groupbyattrs/log-service, transform/rename-log-service, batch]
       exporters: [debug, otlp/dash0]
     metrics:
       receivers: [otlp]
