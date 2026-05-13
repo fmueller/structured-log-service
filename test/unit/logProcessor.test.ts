@@ -75,11 +75,12 @@ describe('StdoutLogProcessor', () => {
     ];
     expect(msg).toBe('log processed');
     expect(payload).toMatchObject({
+      'log.service': 'svc-a',
       type: 'processed_log',
       originalTimestamp: '2024-06-01T12:34:56.789Z',
       level: 'warn',
       message: 'real-message',
-      meta: { service: 'svc-a', requestId: 'req-1' },
+      meta: { requestId: 'req-1' },
     });
     expect(payload.processedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   });
