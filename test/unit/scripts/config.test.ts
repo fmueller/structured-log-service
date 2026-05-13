@@ -70,6 +70,18 @@ describe('parseConfig', () => {
     it('throws for unknown scenario', () => {
       expect(() => parseConfig(['--scenario=nonexistent'], BASE_ENV)).toThrow(/Invalid scenario/);
     });
+
+    it('throws when --scenario is missing its argument', () => {
+      expect(() => parseConfig(['--scenario'], BASE_ENV)).toThrow(/--scenario/);
+    });
+
+    it('throws when --scenario is followed by another long-flag instead of a value', () => {
+      expect(() => parseConfig(['--scenario', '--once', '5'], BASE_ENV)).toThrow(/--scenario/);
+    });
+
+    it('throws when --scenario is followed by a short-flag instead of a value', () => {
+      expect(() => parseConfig(['--scenario', '-x'], BASE_ENV)).toThrow(/--scenario/);
+    });
   });
 
   describe('SCENARIO env', () => {

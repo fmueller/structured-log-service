@@ -16,6 +16,16 @@ function parseIntPositive(raw, name, min = 1) {
   return n;
 }
 
+// A positional value is missing when there is no next argv element, or the
+// next element is another flag (starts with '-'). Used by --once and --scenario.
+function requirePositional(argv, i, flagName, description) {
+  const value = argv[i + 1];
+  if (!value || value.startsWith('-')) {
+    throw new Error(`${flagName} requires ${description}`);
+  }
+  return value;
+}
+
 /**
  * @param {string[]} argv  process.argv.slice(2)
  * @param {Record<string,string|undefined>} env  process.env
@@ -28,10 +38,7 @@ export function parseConfig(argv, env) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--once') {
-      const n = argv[i + 1];
-      if (!n || n.startsWith('--')) {
-        throw new Error('--once requires a positive integer argument');
-      }
+      const n = requirePositional(argv, i, '--once', 'a positive integer argument');
       batchLimit = parseIntPositive(n, '--once');
       mode = 'once';
       i++;
@@ -41,7 +48,7 @@ export function parseConfig(argv, env) {
     } else if (arg.startsWith('--scenario=')) {
       scenarioOverride = arg.slice('--scenario='.length);
     } else if (arg === '--scenario') {
-      scenarioOverride = argv[i + 1];
+      scenarioOverride = requirePositional(argv, i, '--scenario', 'a scenario name argument');
       i++;
     }
   }
