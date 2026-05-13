@@ -61,15 +61,11 @@ export function createApp(overrideConfig?: Config): CreatedApp {
   const worker = new LogWorker(queue, processor, cfg.worker);
   worker.start();
 
-  // Conservative drain estimate: how long it takes one concurrent slot to free.
-  // Real production would track recent drain rate; this is honest and bounded.
+  // Worst case for one in-flight entry to finish — that frees a queue slot
+  // because workers dequeue before processing. Don't multiply by concurrency.
   const queueFullRetryAfterSeconds = Math.max(
     1,
-    Math.ceil(
-      ((cfg.worker.processingDelayMs + cfg.worker.processingDelayJitterMs) *
-        cfg.worker.concurrency) /
-        1000,
-    ),
+    Math.ceil((cfg.worker.processingDelayMs + cfg.worker.processingDelayJitterMs) / 1000),
   );
 
   app.get('/', (_req: Request, res: Response) => {

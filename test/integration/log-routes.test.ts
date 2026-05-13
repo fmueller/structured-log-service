@@ -128,4 +128,27 @@ describe('POST /logs/json', () => {
     expect(Number.isInteger(retryAfter)).toBe(true);
     expect(retryAfter).toBeGreaterThanOrEqual(1);
   });
+
+  it('Retry-After on queue_full reflects (delay + jitter) without multiplying by concurrency', async () => {
+    const { app, worker } = createApp(
+      makeConfig({
+        LOG_QUEUE_MAX_SIZE: '1',
+        LOG_READINESS_HIGH_WATER_MARK_RATIO: '1',
+        LOG_PROCESSING_DELAY_MS: '2500',
+        LOG_PROCESSING_DELAY_JITTER_MS: '500',
+        LOG_WORKER_CONCURRENCY: '5',
+      }),
+    );
+    workers.push(worker);
+
+    const response = await request(app)
+      .post('/logs/json')
+      .set('Authorization', 'Bearer dev-api-key')
+      .send([validRecord, validRecord]);
+
+    expect(response.status).toBe(503);
+    // ceil((2500 + 500) / 1000) = 3. If the formula re-introduced
+    // * concurrency, this would be 15 with concurrency=5.
+    expect(Number(response.headers['retry-after'])).toBe(3);
+  });
 });
