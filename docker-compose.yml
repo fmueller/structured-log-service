@@ -13,6 +13,7 @@ services:
       LOG_WORKER_MAX_RETRIES: '3'
       LOG_PROCESSING_DELAY_MS: '100'
       LOG_PROCESSING_DELAY_JITTER_MS: '2000'
+      LOG_PROCESSING_FAILURE_RATE_PCT: '5'
       OTEL_SERVICE_NAME: 'log-ingestion-service'
       OTEL_EXPORTER_OTLP_ENDPOINT: 'http://otelcol:4318'
       OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf'
@@ -45,7 +46,7 @@ services:
       API_KEY: 'dev-api-key'
       BATCH_SIZE: '10'
       INTERVAL_MS: '500'
-      INJECT_FAILURES: 'false'
+      INJECT_FAILURES: 'true'
     command: ['node', 'send-logs.mjs']
     depends_on:
       app:

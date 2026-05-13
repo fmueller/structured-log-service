@@ -27,6 +27,7 @@ describe('createConfig', () => {
       maxRetries: 3,
       processingDelayMs: 100,
       processingDelayJitterMs: 0,
+      processingFailureRatePct: 0,
       pollIntervalMs: 100,
       retryBackoffBaseMs: 50,
       drainTimeoutMs: 5_000,
@@ -110,5 +111,23 @@ describe('createConfig', () => {
 
   it('rejects negative LOG_PROCESSING_DELAY_JITTER_MS', () => {
     expect(() => createConfig({ LOG_PROCESSING_DELAY_JITTER_MS: '-1' })).toThrow();
+  });
+
+  it('parses LOG_PROCESSING_FAILURE_RATE_PCT from env', () => {
+    const result = createConfig({ LOG_PROCESSING_FAILURE_RATE_PCT: '25' });
+
+    expect(result.worker.processingFailureRatePct).toBe(25);
+  });
+
+  it('rejects negative LOG_PROCESSING_FAILURE_RATE_PCT', () => {
+    expect(() => createConfig({ LOG_PROCESSING_FAILURE_RATE_PCT: '-1' })).toThrow();
+  });
+
+  it('rejects LOG_PROCESSING_FAILURE_RATE_PCT above 100', () => {
+    expect(() => createConfig({ LOG_PROCESSING_FAILURE_RATE_PCT: '101' })).toThrow();
+  });
+
+  it('rejects fractional LOG_PROCESSING_FAILURE_RATE_PCT', () => {
+    expect(() => createConfig({ LOG_PROCESSING_FAILURE_RATE_PCT: '5.5' })).toThrow();
   });
 });

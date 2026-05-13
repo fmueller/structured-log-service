@@ -57,6 +57,7 @@ export function createApp(overrideConfig?: Config): CreatedApp {
   const processor = new StdoutLogProcessor({
     baseMs: cfg.worker.processingDelayMs,
     jitterMs: cfg.worker.processingDelayJitterMs,
+    failureRatePercent: cfg.worker.processingFailureRatePct,
   });
   const worker = new LogWorker(queue, processor, cfg.worker);
   worker.start();

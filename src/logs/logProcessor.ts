@@ -8,17 +8,20 @@ export interface LogProcessor {
 export interface StdoutLogProcessorOptions {
   baseMs: number;
   jitterMs: number;
+  failureRatePercent: number;
   random?: () => number;
 }
 
 export class StdoutLogProcessor implements LogProcessor {
   private readonly baseMs: number;
   private readonly jitterMs: number;
+  private readonly failureRatePercent: number;
   private readonly random: () => number;
 
   constructor(options: StdoutLogProcessorOptions) {
     this.baseMs = options.baseMs;
     this.jitterMs = options.jitterMs;
+    this.failureRatePercent = options.failureRatePercent;
     this.random = options.random ?? Math.random;
   }
 
@@ -28,6 +31,10 @@ export class StdoutLogProcessor implements LogProcessor {
 
     if (record.meta.simulate_processing_failure === true) {
       throw new Error('Simulated log processing failure');
+    }
+
+    if (this.failureRatePercent > 0 && this.random() * 100 < this.failureRatePercent) {
+      throw new Error('Injected artificial processing failure');
     }
 
     logger.info(
