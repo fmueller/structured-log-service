@@ -9,14 +9,7 @@ import { createHttpClient } from './producer/httpClient.mjs';
 import { createSummary } from './producer/summary.mjs';
 import { buildRecord } from './producer/payload.mjs';
 import { SCENARIO_NAMES, getScenarioState } from './producer/scenarios.mjs';
-
-const SERVICES = [
-  'checkout-api',
-  'payment-service',
-  'inventory-service',
-  'auth-service',
-  'notification-service',
-];
+import { pickService } from './producer/services.mjs';
 
 const SCENARIO_ACTIVE_MS = 90_000;
 const SCENARIO_BASELINE_MS = 60_000;
@@ -110,8 +103,6 @@ async function main() {
   }, SUMMARY_INTERVAL_MS);
 
   async function runLoop() {
-    let serviceIdx = 0;
-
     while (!stopped) {
       const scenario = cycler.currentScenario();
       const effectiveInterval = Math.max(
@@ -119,12 +110,12 @@ async function main() {
         Math.round(config.intervalMs / scenario.volumeMultiplier),
       );
 
-      // Build one record per service in this batch
+      // One record per slot in the batch, with service weighted by the scenario's
+      // perServiceModifiers.volumeMultiplier (e.g. checkout-spike weights checkout-api ×5).
       const records = [];
       for (let i = 0; i < config.batchSize; i++) {
-        const service = SERVICES[serviceIdx % SERVICES.length];
+        const service = pickService(scenario, rng);
         records.push(buildRecord(service, scenario, idPool, rng));
-        serviceIdx++;
       }
 
       inFlight = httpClient.sendBatch(records);
