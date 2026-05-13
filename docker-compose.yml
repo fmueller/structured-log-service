@@ -12,6 +12,7 @@ services:
       LOG_WORKER_CONCURRENCY: '5'
       LOG_WORKER_MAX_RETRIES: '3'
       LOG_PROCESSING_DELAY_MS: '100'
+      LOG_PROCESSING_DELAY_JITTER_MS: '2000'
       OTEL_SERVICE_NAME: 'log-ingestion-service'
       OTEL_EXPORTER_OTLP_ENDPOINT: 'http://otelcol:4318'
       OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf'
