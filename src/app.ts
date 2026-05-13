@@ -54,7 +54,10 @@ export function createApp(overrideConfig?: Config): CreatedApp {
   const apiKeyStore = new InMemoryApiKeyStore(cfg.auth.apiKeys);
   const rateLimiter = new FixedWindowRateLimiter(cfg.rateLimit);
   const queue = new LogQueue(cfg.queue.maxSize);
-  const processor = new StdoutLogProcessor(cfg.worker.processingDelayMs);
+  const processor = new StdoutLogProcessor({
+    baseMs: cfg.worker.processingDelayMs,
+    jitterMs: cfg.worker.processingDelayJitterMs,
+  });
   const worker = new LogWorker(queue, processor, cfg.worker);
   worker.start();
 
@@ -62,7 +65,11 @@ export function createApp(overrideConfig?: Config): CreatedApp {
   // Real production would track recent drain rate; this is honest and bounded.
   const queueFullRetryAfterSeconds = Math.max(
     1,
-    Math.ceil((cfg.worker.processingDelayMs * cfg.worker.concurrency) / 1000),
+    Math.ceil(
+      ((cfg.worker.processingDelayMs + cfg.worker.processingDelayJitterMs) *
+        cfg.worker.concurrency) /
+        1000,
+    ),
   );
 
   app.get('/', (_req: Request, res: Response) => {

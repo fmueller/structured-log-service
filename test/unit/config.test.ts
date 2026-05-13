@@ -26,6 +26,7 @@ describe('createConfig', () => {
       concurrency: 5,
       maxRetries: 3,
       processingDelayMs: 100,
+      processingDelayJitterMs: 0,
       pollIntervalMs: 100,
       retryBackoffBaseMs: 50,
       drainTimeoutMs: 5_000,
@@ -99,5 +100,15 @@ describe('createConfig', () => {
     expect(() => createConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'file:///etc/passwd' })).toThrow();
     expect(() => createConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'javascript:alert(1)' })).toThrow();
     expect(() => createConfig({ OTEL_EXPORTER_OTLP_ENDPOINT: 'ftp://example.com' })).toThrow();
+  });
+
+  it('parses LOG_PROCESSING_DELAY_JITTER_MS from env', () => {
+    const result = createConfig({ LOG_PROCESSING_DELAY_JITTER_MS: '250' });
+
+    expect(result.worker.processingDelayJitterMs).toBe(250);
+  });
+
+  it('rejects negative LOG_PROCESSING_DELAY_JITTER_MS', () => {
+    expect(() => createConfig({ LOG_PROCESSING_DELAY_JITTER_MS: '-1' })).toThrow();
   });
 });

@@ -89,25 +89,26 @@ Without the `loadtest` profile you drive traffic with curl. With the profile, `s
 
 All env vars are parsed once at startup by a Zod schema in `src/config.ts`. Invalid values fail loudly.
 
-| Name                                  | Default                 | Description                                                                      |
-| ------------------------------------- | ----------------------- | -------------------------------------------------------------------------------- |
-| `PORT`                                | `3003`                  | HTTP port.                                                                       |
-| `JSON_BODY_LIMIT`                     | `1mb`                   | Maximum JSON request body size (Express `body-parser` syntax).                   |
-| `API_KEYS`                            | `dev-api-key`           | Comma-separated bearer tokens. Each maps to a synthetic client id.               |
-| `RATE_LIMIT_MAX_REQUESTS`             | `10`                    | Max requests per window per client.                                              |
-| `RATE_LIMIT_WINDOW_MS`                | `1000`                  | Rate-limit window length, in milliseconds.                                       |
-| `LOG_MAX_BATCH_SIZE`                  | `1000`                  | Maximum records per `POST /logs/json` batch.                                     |
-| `LOG_QUEUE_MAX_SIZE`                  | `1000`                  | Bounded queue capacity. Batches that would overflow are rejected with 503.       |
-| `LOG_READINESS_HIGH_WATER_MARK_RATIO` | `0.9`                   | Queue-depth ratio above which `/readyz` returns 503 to shed load.                |
-| `LOG_WORKER_CONCURRENCY`              | `5`                     | Maximum concurrent in-flight worker tasks.                                       |
-| `LOG_WORKER_MAX_RETRIES`              | `3`                     | Retries after the initial attempt. `3` means 1 initial + 3 retries = 4 attempts. |
-| `LOG_PROCESSING_DELAY_MS`             | `100`                   | Simulated processing latency in the stdout log processor.                        |
-| `LOG_WORKER_POLL_INTERVAL_MS`         | `100`                   | Worker tick interval when there is no notify signal.                             |
-| `LOG_WORKER_RETRY_BACKOFF_BASE_MS`    | `50`                    | Base backoff (multiplied by attempt count) before retrying a failed record.      |
-| `LOG_WORKER_DRAIN_TIMEOUT_MS`         | `5000`                  | Maximum time the worker waits to drain the queue during shutdown.                |
-| `OTEL_SERVICE_NAME`                   | `log-ingestion-service` | `service.name` resource attribute reported to the OTel pipeline.                 |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`         | _(unset)_               | OTLP endpoint for the trace exporter. Omitting it disables the network exporter. |
-| `LOG_LEVEL`                           | `info`                  | Pino log level (`trace` … `fatal`).                                              |
+| Name                                  | Default                 | Description                                                                                                                                         |
+| ------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                                | `3003`                  | HTTP port.                                                                                                                                          |
+| `JSON_BODY_LIMIT`                     | `1mb`                   | Maximum JSON request body size (Express `body-parser` syntax).                                                                                      |
+| `API_KEYS`                            | `dev-api-key`           | Comma-separated bearer tokens. Each maps to a synthetic client id.                                                                                  |
+| `RATE_LIMIT_MAX_REQUESTS`             | `10`                    | Max requests per window per client.                                                                                                                 |
+| `RATE_LIMIT_WINDOW_MS`                | `1000`                  | Rate-limit window length, in milliseconds.                                                                                                          |
+| `LOG_MAX_BATCH_SIZE`                  | `1000`                  | Maximum records per `POST /logs/json` batch.                                                                                                        |
+| `LOG_QUEUE_MAX_SIZE`                  | `1000`                  | Bounded queue capacity. Batches that would overflow are rejected with 503.                                                                          |
+| `LOG_READINESS_HIGH_WATER_MARK_RATIO` | `0.9`                   | Queue-depth ratio above which `/readyz` returns 503 to shed load.                                                                                   |
+| `LOG_WORKER_CONCURRENCY`              | `5`                     | Maximum concurrent in-flight worker tasks.                                                                                                          |
+| `LOG_WORKER_MAX_RETRIES`              | `3`                     | Retries after the initial attempt. `3` means 1 initial + 3 retries = 4 attempts.                                                                    |
+| `LOG_PROCESSING_DELAY_MS`             | `100`                   | Simulated processing latency in the stdout log processor.                                                                                           |
+| `LOG_PROCESSING_DELAY_JITTER_MS`      | `0`                     | Additional uniform random jitter added on top of `LOG_PROCESSING_DELAY_MS` per entry, in ms. Effective delay is uniform in `[base, base + jitter]`. |
+| `LOG_WORKER_POLL_INTERVAL_MS`         | `100`                   | Worker tick interval when there is no notify signal.                                                                                                |
+| `LOG_WORKER_RETRY_BACKOFF_BASE_MS`    | `50`                    | Base backoff (multiplied by attempt count) before retrying a failed record.                                                                         |
+| `LOG_WORKER_DRAIN_TIMEOUT_MS`         | `5000`                  | Maximum time the worker waits to drain the queue during shutdown.                                                                                   |
+| `OTEL_SERVICE_NAME`                   | `log-ingestion-service` | `service.name` resource attribute reported to the OTel pipeline.                                                                                    |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`         | _(unset)_               | OTLP endpoint for the trace exporter. Omitting it disables the network exporter.                                                                    |
+| `LOG_LEVEL`                           | `info`                  | Pino log level (`trace` … `fatal`).                                                                                                                 |
 
 `OTEL_EXPORTER_OTLP_PROTOCOL` is read directly by the OpenTelemetry Node SDK (set to `http/protobuf` in `docker-compose.yml`); the service does not parse it.
 

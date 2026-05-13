@@ -5,11 +5,26 @@ export interface LogProcessor {
   process(record: LogRecord): Promise<void>;
 }
 
+export interface StdoutLogProcessorOptions {
+  baseMs: number;
+  jitterMs: number;
+  random?: () => number;
+}
+
 export class StdoutLogProcessor implements LogProcessor {
-  constructor(private readonly processingDelayMs: number) {}
+  private readonly baseMs: number;
+  private readonly jitterMs: number;
+  private readonly random: () => number;
+
+  constructor(options: StdoutLogProcessorOptions) {
+    this.baseMs = options.baseMs;
+    this.jitterMs = options.jitterMs;
+    this.random = options.random ?? Math.random;
+  }
 
   async process(record: LogRecord): Promise<void> {
-    await sleep(this.processingDelayMs);
+    const delay = this.baseMs + Math.floor(this.random() * (this.jitterMs + 1));
+    if (delay > 0) await sleep(delay);
 
     if (record.meta.simulate_processing_failure === true) {
       throw new Error('Simulated log processing failure');

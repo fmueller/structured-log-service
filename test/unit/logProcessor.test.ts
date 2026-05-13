@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { sleep, StdoutLogProcessor } from '../../src/logs/logProcessor';
 import type { LogRecord } from '../../src/logs/types';
@@ -14,31 +14,39 @@ function makeRecord(overrides: Partial<LogRecord> = {}): LogRecord {
   };
 }
 
+function makeProcessor(
+  overrides: Partial<{ baseMs: number; jitterMs: number; random: () => number }> = {},
+): StdoutLogProcessor {
+  return new StdoutLogProcessor({ baseMs: 0, jitterMs: 0, ...overrides });
+}
+
 describe('StdoutLogProcessor', () => {
+  beforeEach(() => {
+    vi.spyOn(logger, 'info').mockImplementation(() => undefined);
+  });
+
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
   it('throws "Simulated log processing failure" when meta.simulate_processing_failure is true', async () => {
-    const processor = new StdoutLogProcessor(0);
+    const processor = makeProcessor();
     const record = makeRecord({ meta: { simulate_processing_failure: true } });
 
     await expect(processor.process(record)).rejects.toThrow('Simulated log processing failure');
   });
 
   it('does not call logger.info when the record simulates a processing failure', async () => {
-    const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined);
-    const processor = new StdoutLogProcessor(0);
+    const processor = makeProcessor();
     const record = makeRecord({ meta: { simulate_processing_failure: true } });
 
     await expect(processor.process(record)).rejects.toThrow();
 
-    expect(info).not.toHaveBeenCalled();
+    expect(vi.mocked(logger.info)).not.toHaveBeenCalled();
   });
 
   it('logs exactly once with the expected structured payload on success', async () => {
-    const info = vi.spyOn(logger, 'info').mockImplementation(() => undefined);
-    const processor = new StdoutLogProcessor(0);
+    const processor = makeProcessor();
     const record = makeRecord({
       timestamp: '2024-06-01T12:34:56.789Z',
       level: 'warn',
@@ -48,8 +56,11 @@ describe('StdoutLogProcessor', () => {
 
     await processor.process(record);
 
-    expect(info).toHaveBeenCalledTimes(1);
-    const [payload, msg] = info.mock.calls[0] as [Record<string, unknown>, string];
+    expect(vi.mocked(logger.info)).toHaveBeenCalledTimes(1);
+    const [payload, msg] = vi.mocked(logger.info).mock.calls[0] as [
+      Record<string, unknown>,
+      string,
+    ];
     expect(msg).toBe('log processed');
     expect(payload).toMatchObject({
       type: 'processed_log',
@@ -62,16 +73,14 @@ describe('StdoutLogProcessor', () => {
   });
 
   it('does not treat truthy-but-not-true simulate flags as failures', async () => {
-    vi.spyOn(logger, 'info').mockImplementation(() => undefined);
-    const processor = new StdoutLogProcessor(0);
+    const processor = makeProcessor();
     const record = makeRecord({ meta: { simulate_processing_failure: 'true' } });
 
     await expect(processor.process(record)).resolves.toBeUndefined();
   });
 
-  it('waits at least processingDelayMs before resolving', async () => {
-    vi.spyOn(logger, 'info').mockImplementation(() => undefined);
-    const processor = new StdoutLogProcessor(25);
+  it('waits at least baseMs before resolving when jitter is 0', async () => {
+    const processor = makeProcessor({ baseMs: 25 });
 
     const startedAt = Date.now();
     await processor.process(makeRecord());
@@ -80,15 +89,57 @@ describe('StdoutLogProcessor', () => {
     expect(elapsed).toBeGreaterThanOrEqual(20);
   });
 
-  it('with processingDelayMs of 0 resolves promptly', async () => {
-    vi.spyOn(logger, 'info').mockImplementation(() => undefined);
-    const processor = new StdoutLogProcessor(0);
+  it('with baseMs 0 and jitterMs 0 resolves promptly', async () => {
+    const processor = makeProcessor();
 
     const startedAt = Date.now();
     await processor.process(makeRecord());
     const elapsed = Date.now() - startedAt;
 
     expect(elapsed).toBeLessThan(20);
+  });
+
+  it('with random returning 0 delays by exactly baseMs', async () => {
+    const processor = makeProcessor({ baseMs: 30, jitterMs: 100, random: () => 0 });
+
+    const startedAt = Date.now();
+    await processor.process(makeRecord());
+    const elapsed = Date.now() - startedAt;
+
+    expect(elapsed).toBeGreaterThanOrEqual(25);
+    expect(elapsed).toBeLessThan(60);
+  });
+
+  it('with random returning 0.9999999 delays by approximately baseMs + jitterMs', async () => {
+    const processor = makeProcessor({ baseMs: 10, jitterMs: 40, random: () => 0.9999999 });
+
+    const startedAt = Date.now();
+    await processor.process(makeRecord());
+    const elapsed = Date.now() - startedAt;
+
+    expect(elapsed).toBeGreaterThanOrEqual(45);
+    expect(elapsed).toBeLessThan(80);
+  });
+
+  it('with jitterMs 0 ignores random output and resolves promptly', async () => {
+    const processor = makeProcessor({ baseMs: 0, jitterMs: 0, random: () => 0.9 });
+
+    const startedAt = Date.now();
+    await processor.process(makeRecord());
+    const elapsed = Date.now() - startedAt;
+
+    expect(elapsed).toBeLessThan(20);
+  });
+
+  it('invokes random exactly once per process() call', async () => {
+    const random = vi.fn(() => 0);
+    const processor = makeProcessor({ jitterMs: 10, random });
+
+    await processor.process(makeRecord());
+    await processor.process(makeRecord());
+    await processor.process(makeRecord());
+
+    expect(random).toHaveBeenCalledTimes(3);
   });
 });
 

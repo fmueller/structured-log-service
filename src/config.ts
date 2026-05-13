@@ -16,6 +16,7 @@ const envSchema = z.object({
   LOG_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(5),
   LOG_WORKER_MAX_RETRIES: z.coerce.number().int().min(0).default(3),
   LOG_PROCESSING_DELAY_MS: z.coerce.number().int().min(0).default(100),
+  LOG_PROCESSING_DELAY_JITTER_MS: z.coerce.number().int().min(0).default(0),
   LOG_WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(100),
   LOG_WORKER_RETRY_BACKOFF_BASE_MS: z.coerce.number().int().min(0).default(50),
   LOG_WORKER_DRAIN_TIMEOUT_MS: z.coerce.number().int().min(0).default(5_000),
@@ -42,6 +43,7 @@ export interface Config {
     concurrency: number;
     maxRetries: number;
     processingDelayMs: number;
+    processingDelayJitterMs: number;
     pollIntervalMs: number;
     retryBackoffBaseMs: number;
     drainTimeoutMs: number;
@@ -80,6 +82,7 @@ export function createConfig(env: NodeJS.ProcessEnv = process.env): Config {
       concurrency: parsed.LOG_WORKER_CONCURRENCY,
       maxRetries: parsed.LOG_WORKER_MAX_RETRIES,
       processingDelayMs: parsed.LOG_PROCESSING_DELAY_MS,
+      processingDelayJitterMs: parsed.LOG_PROCESSING_DELAY_JITTER_MS,
       pollIntervalMs: parsed.LOG_WORKER_POLL_INTERVAL_MS,
       retryBackoffBaseMs: parsed.LOG_WORKER_RETRY_BACKOFF_BASE_MS,
       drainTimeoutMs: parsed.LOG_WORKER_DRAIN_TIMEOUT_MS,
