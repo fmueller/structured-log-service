@@ -38,11 +38,16 @@ Each capability with a pointer into the codebase.
 | Processing    | Simulated per-entry delay                                                   | `StdoutLogProcessor.process` (base + uniform jitter)                                              |
 | Processing    | Configurable concurrency (default 5)                                        | `LOG_WORKER_CONCURRENCY`, enforced in `LogWorker.tick`                                            |
 | Processing    | Retry up to 3 times with exponential backoff                                | `LogWorker.processWithRetries` (1 initial + 3 retries)                                            |
+| Processing    | Transient vs permanent failures (only transient retried)                    | `src/logs/transientProcessingError.ts`, `failureKind.ts`                                          |
+| Processing    | Optional chaos decorator: lognormal latency, failure injection, outliers    | `src/logs/chaosLogProcessor.ts`, `chaosPolicy.ts` (enabled via `LOG_CHAOS_ENABLED`)               |
 | Observability | `@opentelemetry/sdk-node`                                                   | `src/telemetry/tracing.ts` (started at module load)                                               |
 | Observability | Child span per entry                                                        | `LogWorker.processAttempt` → `tracer.startActiveSpan('log.process', …)`                           |
 | Observability | Attributes: `log.level`, `log.service`, `queue.depth`, `worker.retry_count` | `LogWorker.processAttempt`                                                                        |
 | Observability | `recordException` + `setStatus(ERROR)` on failure                           | `LogWorker.processAttempt` catch block                                                            |
+| Observability | Semantic-attribute promotion to top-level Pino fields                       | `src/logs/semanticAttributes.ts` (`http.*`, `user.*`, `payment.*`, `log.service`, …)              |
+| Observability | Per-record service identity via `log.service → resource.service.name`       | `otelcol.yaml` (`groupbyattrs/log-service`, `transform/rename-log-service`)                       |
 | Observability | Dash0 backend                                                               | `otelcol.yaml` (`otlp/dash0` exporter); see [Observability with Dash0](#observability-with-dash0) |
+| Smoke         | Synthetic multi-service producer with named scenarios                       | `scripts/send-logs.mjs`, `scripts/producer/*`                                                     |
 
 ## How it works
 
@@ -103,18 +108,21 @@ A short orientation for new readers — the highest-leverage files to start with
 
 The worker creates one span per log entry (`log.process`, `SpanKind.INTERNAL`) as a child of the HTTP request span. The parent context is captured at ingest in `logRoutes.ts` and re-entered in the worker with `context.with(entry.parentContext, …)`, so the trace stays intact across the queue hop.
 
-**Span attributes set on every entry:**
+**Span attributes set per entry** (chaos-prefixed rows only appear when `LOG_CHAOS_ENABLED=true`):
 
-| Attribute              | Source                                       |
-| ---------------------- | -------------------------------------------- |
-| `log.level`            | record `level`                               |
-| `log.service`          | `meta.service` (via `getServiceName(entry)`) |
-| `queue.depth`          | `LogQueue.depth()` at dispatch time          |
-| `worker.retry_count`   | current retry index (0..maxRetries)          |
-| `log.message.length`   | record `message.length`                      |
-| `log.entry_id`         | UUID assigned at ingest                      |
-| `client.id`            | authenticated client id                      |
-| `worker.processing_ms` | measured per attempt                         |
+| Attribute                     | Source                                                                            |
+| ----------------------------- | --------------------------------------------------------------------------------- |
+| `log.level`                   | record `level`                                                                    |
+| `log.service`                 | `meta.service` (via `getServiceName(entry)`)                                      |
+| `queue.depth`                 | `LogQueue.depth()` at dispatch time                                               |
+| `worker.retry_count`          | current retry index (0..maxRetries)                                               |
+| `log.message.length`          | record `message.length`                                                           |
+| `log.entry_id`                | UUID assigned at ingest                                                           |
+| `client.id`                   | authenticated client id                                                           |
+| `worker.processing_ms`        | measured per attempt                                                              |
+| `worker.failure_kind`         | `none \| transient \| permanent`, classified in `LogWorker.processAttempt`        |
+| `chaos.injected_latency_ms`   | (chaos only) milliseconds the decorator slept before delegating                   |
+| `chaos.injected_failure_kind` | (chaos only) `none \| transient \| permanent`, set in `ChaosLogProcessor.process` |
 
 On failure, the catch block calls `span.recordException(error)` and `span.setStatus({ code: SpanStatusCode.ERROR, message })` — visible in Dash0 as red spans with the exception payload attached.
 
@@ -125,7 +133,7 @@ On failure, the catch block calls `span.recordException(error)` and `span.setSta
 - Filter spans by `status.code = ERROR` to see retry storms — the same `log.entry_id` will appear up to 4 times (1 initial + 3 retries) with increasing `worker.retry_count`.
 - Group by `log.service` to attribute work to upstream emitters (`meta.service`).
 - Sort by `worker.processing_ms` to spot slow records.
-- The smoke setup injects two distinct error messages so you can split server-side vs client-flagged failures by `exception.message`.
+- Group by `worker.failure_kind` to separate retryable (`transient`) from non-retryable (`permanent`) failures. With chaos enabled in compose the decorator emits `chaos: simulated transient failure` and `chaos: simulated permanent failure`; the inner `StdoutLogProcessor` still emits `Simulated log processing failure` (client-flagged via `meta.simulate_processing_failure`) and `Injected artificial processing failure` (server-side via `LOG_PROCESSING_FAILURE_RATE_PCT`). Filter by `exception.message` to split the four populations.
 
 ## Example request
 
