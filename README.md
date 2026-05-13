@@ -10,7 +10,7 @@ HTTP log ingestion service: authenticated bearer ingest, per-client rate limitin
 ## Contents
 
 - [Capabilities](#capabilities)
-- [Architecture](#architecture)
+- [How it works](#how-it-works)
 - [Quick start](#quick-start)
 - [Code tour](#code-tour)
 - [Observability with Dash0](#observability-with-dash0)
@@ -44,7 +44,7 @@ Each capability with a pointer into the codebase.
 | Observability | `recordException` + `setStatus(ERROR)` on failure                           | `LogWorker.processAttempt` catch block                                                            |
 | Observability | Dash0 backend                                                               | `otelcol.yaml` (`otlp/dash0` exporter); see [Observability with Dash0](#observability-with-dash0) |
 
-## Architecture
+## How it works
 
 ```
   client
@@ -70,7 +70,7 @@ Each capability with a pointer into the codebase.
                                              Dash0
 ```
 
-Each accepted request returns 202 immediately; work is drained asynchronously by the worker pool. `/livez` and `/readyz` expose Kubernetes-style probes for liveness (process up) and readiness (worker running, queue below the high-water mark).
+Each accepted request returns 202 immediately; work is drained asynchronously by the worker pool.
 
 ## Quick start
 
